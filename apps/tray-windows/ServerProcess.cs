@@ -8,7 +8,7 @@ using System.Text.RegularExpressions;
 namespace WadTray
 {
     /// <summary>
-    /// Runs `node --import tsx src/index.ts` in apps/server as a single hidden process.
+    /// Runs `node --use-system-ca --import tsx src/index.ts` (system CA store: works behind TLS-inspecting corporate proxies) in apps/server as a single hidden process.
     /// Output goes to %LOCALAPPDATA%\WhatsAppAIDigest\server.log (the server never logs message contents).
     /// </summary>
     internal sealed class ServerProcess : IDisposable
@@ -39,7 +39,7 @@ namespace WadTray
                     new UTF8Encoding(false)) { AutoFlush = true };
                 _tail.Clear();
 
-                var psi = new ProcessStartInfo(nodeExe, "--import tsx src/index.ts")
+                var psi = new ProcessStartInfo(nodeExe, "--use-system-ca --import tsx src/index.ts")
                 {
                     WorkingDirectory = serverDir,
                     UseShellExecute = false,

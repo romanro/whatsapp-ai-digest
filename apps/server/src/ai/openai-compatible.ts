@@ -1,4 +1,4 @@
-import OpenAI, { APIConnectionTimeoutError, APIError } from "openai";
+import OpenAI, { APIConnectionError, APIConnectionTimeoutError, APIError } from "openai";
 import { AiError, type AiProvider, type JsonCompletionRequest, type ModelStatus } from "./provider.ts";
 
 export interface OpenAiCompatibleOptions {
@@ -90,6 +90,16 @@ export class OpenAiCompatibleProvider implements AiProvider {
 export function mapError(err: unknown): AiError {
   if (err instanceof AiError) return err;
   if (err instanceof APIConnectionTimeoutError) return new AiError("timeout", "AI-провайдер не ответил вовремя. Попробуйте ещё раз.");
+  if (err instanceof APIConnectionError) {
+    const code = causeCode(err);
+    const tls = code !== null && /CERT|SSL|TLS/i.test(code);
+    return new AiError(
+      "provider_error",
+      tls
+        ? `Ошибка сертификата при подключении к AI-провайдеру (${code}). Вероятно, корпоративный прокси/антивирус проверяет HTTPS — запускайте сервер через «pnpm start» (использует системные сертификаты).`
+        : `Нет соединения с AI-провайдером${code ? ` (${code})` : ""}. Проверьте интернет, прокси или VPN.`,
+    );
+  }
   if (err instanceof APIError) {
     const status = err.status;
     if (status === 401 || status === 403) return new AiError("auth_failed", "Неверный или отозванный API-ключ AI-провайдера.");
@@ -107,6 +117,17 @@ export function mapError(err: unknown): AiError {
     return new AiError("provider_error", `Ошибка AI-провайдера${status ? ` (${status})` : ""}. Попробуйте позже.`);
   }
   return new AiError("provider_error", "Не удалось связаться с AI-провайдером. Проверьте интернет-соединение.");
+}
+
+/** Finds a Node/undici error code (e.g. SELF_SIGNED_CERT_IN_CHAIN, ENOTFOUND) in the cause chain. */
+function causeCode(err: unknown): string | null {
+  let cur: unknown = err;
+  for (let i = 0; i < 5 && cur && typeof cur === "object"; i++) {
+    const code = (cur as { code?: unknown }).code;
+    if (typeof code === "string" && code.length > 0) return code;
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return null;
 }
 
 /** Provider error messages could echo request content; keep them short. */

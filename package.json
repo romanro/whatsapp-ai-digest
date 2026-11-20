@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "pnpm@10.24.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.15"
   },
   "scripts": {
     "dev": "concurrently -n server,ext -c cyan,magenta \"pnpm --filter @wad/server dev\" \"pnpm --filter @wad/extension dev\"",

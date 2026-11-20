@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch --clear-screen=false src/index.ts",
-    "start": "tsx src/index.ts",
-    "check-model": "tsx src/check-model.ts",
+    "dev": "node --use-system-ca --import tsx --watch src/index.ts",
+    "start": "node --use-system-ca --import tsx src/index.ts",
+    "check-model": "node --use-system-ca --import tsx src/check-model.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
