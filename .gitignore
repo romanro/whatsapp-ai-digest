@@ -5,3 +5,7 @@ dist/
 *.log
 .DS_Store
 coverage/
+
+# .NET build output
+apps/tray-windows/bin/
+apps/tray-windows/obj/

@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Tiny Windows tray app that starts/stops the local Node server.
+    Targets .NET Framework 4.8, which is built into Windows 10/11 — nothing extra to install to RUN it.
+    Building needs the .NET SDK (works on Windows, macOS or Linux): dotnet build -c Release
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>WhatsAppAIDigestTray</AssemblyName>
+    <RootNamespace>WadTray</RootNamespace>
+    <ApplicationIcon>icons\app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Product>WhatsApp AI Digest</Product>
+    <AssemblyTitle>WhatsApp AI Digest — tray</AssemblyTitle>
+    <Version>0.1.0</Version>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Net.Http" />
+    <EmbeddedResource Include="icons\*.ico" LogicalName="%(Filename).ico" />
+  </ItemGroup>
+</Project>

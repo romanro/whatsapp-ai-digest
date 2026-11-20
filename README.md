@@ -68,6 +68,24 @@ rebuilds the extension on every change (reload it in `chrome://extensions` after
 
 Other scripts: `pnpm lint`, `pnpm typecheck`, `pnpm test`.
 
+### Optional: Windows tray app (instead of keeping a terminal open)
+
+`apps/tray-windows` is a ~200 KB tray app (.NET Framework 4.8 — already part of Windows 10/11) that starts the
+server hidden, shows its status in the notification area and stops it on exit.
+
+```powershell
+winget install Microsoft.DotNet.SDK.9      # once, only needed to BUILD the tray app
+pnpm tray:build                            # → apps\tray-windows\dist\WhatsAppAIDigestTray.exe
+```
+
+Double-click `WhatsAppAIDigestTray.exe` (pin it to Start or the taskbar if you like). Tray icon colours:
+teal = server running and AI ready, orange = starting / AI not configured, gray = stopped or error.
+Right-click menu: status, open WhatsApp Web, start / stop / restart server, edit `.env` (creates it from the example),
+open the server log (`%LOCALAPPDATA%\WhatsAppAIDigest\server.log` — no message contents), “start with Windows”, exit.
+Double-click the icon to open WhatsApp Web. If the server crashes (e.g. port in use), a notification shows the reason.
+The Node server is stopped whenever the tray app exits or even crashes (Windows Job Object), so the port is always released.
+Keep the exe inside the project folder (it finds the project by walking up); otherwise it asks for the folder once.
+
 ## 4. Load the extension in Chrome
 
 1. Open `chrome://extensions`.
@@ -98,7 +116,9 @@ If the warning **«Период покрыт не полностью»** appears
 
 | Symptom | Fix |
 |---|---|
-| “Локальный сервер не запущен” | Run `pnpm start` and keep the window open. |
+| “Локальный сервер не запущен” | Start the tray app, or run `pnpm start` and keep the window open. |
+| Tray icon gray, “Не найден Node.js” | Install Node.js 22+ and restart the tray app (it looks in PATH, Program Files and nvm-windows). |
+| Tray: “Зависимости не установлены” | Run `pnpm install` in the project folder. |
 | Server says “Port 3001 is already used by another program” | Another app uses 3001. Stop it, or set `PORT=3002` in `apps\server\.env` and `http://127.0.0.1:3002` in extension settings. |
 | AI status “нет” / “API-ключ не настроен” | Set `GROQ_API_KEY` in `apps\server\.env`, restart the server. Run `pnpm --filter @wad/server check-model`. |
 | “Модель … недоступна” | The model was retired — set another `GROQ_MODEL`. |

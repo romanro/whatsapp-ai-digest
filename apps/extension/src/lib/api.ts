@@ -23,7 +23,7 @@ export async function fetchHealth(backendUrl: string, signal?: AbortSignal): Pro
   try {
     res = await fetch(`${base(backendUrl)}/health`, { signal });
   } catch {
-    throw new ApiError("Локальный сервер не запущен. Выполните «pnpm start» в папке проекта.", "offline");
+    throw new ApiError("Локальный сервер не запущен. Запустите WhatsApp AI Digest (значок в трее) или выполните «pnpm start».", "offline");
   }
   if (!res.ok) throw new ApiError(`Сервер ответил ошибкой ${res.status}.`, "http");
   return HealthResponseSchema.parse(await res.json());

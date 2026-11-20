@@ -12,7 +12,8 @@
     "build": "pnpm -r --if-present build",
     "lint": "eslint .",
     "typecheck": "pnpm -r --if-present typecheck",
-    "test": "pnpm -r --if-present test"
+    "test": "pnpm -r --if-present test",
+    "tray:build": "dotnet build apps/tray-windows -c Release -o apps/tray-windows/dist"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
