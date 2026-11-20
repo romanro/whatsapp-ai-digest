@@ -1,3 +1,4 @@
+import net from "node:net";
 import { loadConfig } from "./config.ts";
 import { createProvider } from "./ai/index.ts";
 import { buildApp } from "./app.ts";
@@ -5,6 +6,31 @@ import { buildApp } from "./app.ts";
 const config = loadConfig();
 const provider = createProvider(config.ai);
 const app = buildApp(config, provider);
+
+/**
+ * Some OSes (macOS, Windows) allow binding 127.0.0.1:PORT even when another app listens on 0.0.0.0:PORT,
+ * which would silently steal that app's traffic. Refuse to start if anything already answers on the port.
+ */
+function portInUse(host: string, port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host, port });
+    const done = (inUse: boolean) => {
+      socket.destroy();
+      resolve(inUse);
+    };
+    socket.setTimeout(500, () => done(false));
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+  });
+}
+
+if (await portInUse(config.host, config.port)) {
+  app.log.error(
+    `Port ${config.port} is already used by another program. Stop it, or set PORT in apps/server/.env ` +
+      `and the same address in the extension settings.`,
+  );
+  process.exit(1);
+}
 
 try {
   await app.listen({ host: config.host, port: config.port });

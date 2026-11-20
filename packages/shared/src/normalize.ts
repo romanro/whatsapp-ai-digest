@@ -5,7 +5,7 @@
 
 /** Bidi control / zero-width characters WhatsApp and phones inject around RTL text and mentions. */
 // LRM, RLM, ALM, LRE..RLO, LRI..PDI, ZWSP, ZWNJ is meaningful in some scripts (kept), ZWJ kept (emoji), BOM.
-const INVISIBLE_RE = /[​‎‏؜‪-‮⁦-⁩﻿]/g;
+const INVISIBLE_RE = /[\u200B\u200E\u200F\u061C\u202A-\u202E\u2066-\u2069\uFEFF]/g;
 
 export function normalizeText(input: string): string {
   return (
@@ -13,7 +13,7 @@ export function normalizeText(input: string): string {
       .normalize("NFC")
       .replace(INVISIBLE_RE, "")
       // non-breaking & other unicode spaces → regular space
-      .replace(/[  -   　]/g, " ")
+      .replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ")
       .replace(/\r\n?/g, "\n")
       // collapse runs of spaces/tabs but keep line breaks
       .replace(/[ \t]+/g, " ")

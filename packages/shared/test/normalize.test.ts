@@ -4,7 +4,7 @@ import type { RawMessage } from "../src/normalize.ts";
 
 describe("normalizeText", () => {
   it("removes bidi control marks around Hebrew while keeping the text", () => {
-    expect(normalizeText("‏שלום‎  עולם‫!‬")).toBe("שלום עולם!");
+    expect(normalizeText("\u200Fשלום\u200E  עולם\u202B!\u202C")).toBe("שלום עולם!");
   });
 
   it("applies NFC so composed and decomposed Cyrillic compare equal", () => {
@@ -19,12 +19,12 @@ describe("normalizeText", () => {
   });
 
   it("collapses spaces, converts NBSP, keeps single line breaks and trims", () => {
-    expect(normalizeText("  a  b \r\n\r\n\r\n c\t\td  ")).toBe("a b\n\nc d");
+    expect(normalizeText("  a\u00A0\u00A0b \r\n\r\n\r\n c\t\td  ")).toBe("a b\n\nc d");
   });
 
   it("normalizes sender labels to one line or null", () => {
     expect(normalizeSender("  Анна\nК.  ")).toBe("Анна К.");
-    expect(normalizeSender("‎")).toBeNull();
+    expect(normalizeSender("\u200E")).toBeNull();
     expect(normalizeSender(null)).toBeNull();
   });
 });

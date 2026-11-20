@@ -21,7 +21,7 @@ const LABEL_RE =
   /^\s*\[\s*(\d{1,2})[:.](\d{2})(?:\s*([AaPp])\.?\s*[Mm]\.?)?\s*,\s*(\d{1,4})[./-](\d{1,2})[./-](\d{1,4})\s*\]\s*(.*)$/s;
 
 export function parseLabel(label: string): ParsedLabel | null {
-  const m = LABEL_RE.exec(label.replace(/[‎‏‪-‮⁦-⁩]/g, ""));
+  const m = LABEL_RE.exec(label.replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, ""));
   if (!m) return null;
   let hour = Number(m[1]);
   const minute = Number(m[2]);

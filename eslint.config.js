@@ -10,9 +10,13 @@ export default tseslint.config(
   {
     languageOptions: { globals: { ...globals.node } },
     rules: {
-      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
+      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_", ignoreRestSiblings: true }],
       "no-console": ["error", { allow: ["warn", "error"] }],
     },
+  },
+  {
+    files: ["**/test/**/*.ts"],
+    rules: { "@typescript-eslint/no-non-null-assertion": "off" },
   },
   {
     files: ["apps/extension/**/*.{ts,tsx}"],

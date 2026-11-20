@@ -14,7 +14,7 @@ describe("parseLabel", () => {
   });
 
   it("parses dotted dates and Hebrew senders wrapped in bidi marks", () => {
-    expect(parseLabel("‏[09:00, 20.11.2026] ‏אמא של נועה: ")).toMatchObject({
+    expect(parseLabel("\u200F[09:00, 20.11.2026] \u200Fאמא של נועה: ")).toMatchObject({
       parts: [20, 11, 2026],
       hour: 9,
       sender: "אמא של נועה",
