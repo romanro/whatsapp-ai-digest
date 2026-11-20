@@ -14,6 +14,7 @@ import { preparePayload, type PreparedPayload } from "../lib/pipeline.ts";
 import { loadSettings, type Settings } from "../lib/settings.ts";
 import { SummaryView } from "./SummaryView.tsx";
 import { useStatus, type Check } from "./useStatus.ts";
+import { NOT_GROUP_MESSAGE } from "../content/extractor.ts";
 
 type Phase =
   | { kind: "idle" }
@@ -133,7 +134,7 @@ export function App() {
       : !probe?.chatOpen
         ? { state: "fail", message: "Откройте нужную группу в WhatsApp Web." }
         : probe.isGroup === false
-          ? { state: "fail", message: "Открыт личный чат — личные чаты не обрабатываются." }
+          ? { state: "fail", message: NOT_GROUP_MESSAGE }
           : probe.isGroup === null
             ? { state: "fail", message: "Тип чата не определён (нет сообщений на экране)." }
             : { state: "ok" };

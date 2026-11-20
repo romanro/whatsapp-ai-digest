@@ -1,6 +1,14 @@
 import { dedupeMessages, normalizeSender, normalizeText, opaqueKey, type RawMessage } from "@wad/shared";
 import { inferDateOrder, labelToDate, parseLabel, toLocalIso, type DateOrder, type ParsedLabel } from "@wad/shared";
-import { GROUP_ID_MARKER, READ_MORE_TEXTS, SELECTORS, queryAll, queryFirst } from "./selectors.ts";
+import {
+  GROUP_ID_MARKER,
+  GROUP_MIN_DISTINCT_SENDERS,
+  GROUP_MIN_SUBTITLE_COMMAS,
+  READ_MORE_TEXTS,
+  SELECTORS,
+  queryAll,
+  queryFirst,
+} from "./selectors.ts";
 
 export interface ProbeResult {
   whatsappLoaded: boolean;
@@ -32,6 +40,9 @@ export interface ExtractionError {
   message: string;
 }
 
+export const NOT_GROUP_MESSAGE =
+  "Не удалось подтвердить, что это группа — личные чаты не обрабатываются. Если это группа, подождите, пока под названием появится список участников, и нажмите ↻.";
+
 export function probe(doc: Document): ProbeResult {
   const whatsappLoaded = !!queryFirst(doc, SELECTORS.appRoot) && !!queryFirst(doc, SELECTORS.sidePane);
   const main = queryFirst(doc, SELECTORS.mainPane);
@@ -46,10 +57,25 @@ function readTitle(main: Element): string | null {
   return name || null;
 }
 
-function detectGroup(main: Element): boolean | null {
+/**
+ * true only on positive evidence of a group; false = possibly a private chat (refused);
+ * null = nothing rendered yet to decide on.
+ */
+export function detectGroup(main: Element): boolean | null {
+  const subtitle = queryFirst(main, SELECTORS.chatSubtitle)?.textContent ?? "";
+  if ((subtitle.match(/,/g) ?? []).length >= GROUP_MIN_SUBTITLE_COMMAS) return true;
+
   const rows = queryAll(main, SELECTORS.messageRow);
-  if (!rows.length) return null;
-  return rows.some((r) => (r.getAttribute("data-id") ?? "").includes(GROUP_ID_MARKER));
+  if (rows.some((r) => (r.getAttribute("data-id") ?? "").includes(GROUP_ID_MARKER))) return true;
+
+  const senders = new Set<string>();
+  for (const el of queryAll(main, SELECTORS.prePlainText)) {
+    const sender = parseLabel(el.getAttribute("data-pre-plain-text") ?? "")?.sender;
+    if (sender) senders.add(normalizeText(sender));
+  }
+  if (senders.size >= GROUP_MIN_DISTINCT_SENDERS) return true;
+
+  return rows.length || subtitle ? false : null;
 }
 
 /** Text content with emoji <img alt> preserved, excluding nested quoted messages. */
@@ -103,7 +129,7 @@ export function extractRenderedMessages(doc: Document, dateOrderFallback: DateOr
     return { ok: false, code: "unknown_chat_type", message: "Не удалось определить тип чата: в окне нет сообщений." };
   }
   if (!p.isGroup) {
-    return { ok: false, code: "not_group", message: "Открыт личный чат. Расширение работает только с группами." };
+    return { ok: false, code: "not_group", message: NOT_GROUP_MESSAGE };
   }
 
   const rows = queryAll(main, SELECTORS.messageRow);
@@ -113,11 +139,10 @@ export function extractRenderedMessages(doc: Document, dateOrderFallback: DateOr
   let truncated = 0;
 
   for (const row of rows) {
-    const dataId = row.getAttribute("data-id") ?? "";
-    // Only rows that belong to this group chat (skips nested/unrelated data-id nodes).
-    if (!dataId.includes(GROUP_ID_MARKER)) continue;
-    // Nested data-id elements (e.g. inside quotes) — keep only the outermost row.
-    if (row.parentElement?.closest("[data-id]")) continue;
+    const dataId = row.getAttribute("data-id") || row.getAttribute("data-testid") || "";
+    if (!dataId) continue;
+    // Nested message elements (e.g. inside quotes) — keep only the outermost row.
+    if (row.parentElement?.closest('[data-id], [data-testid^="conv-msg-"]')) continue;
 
     const labelEl = queryAll(row, SELECTORS.prePlainText).find((el) => !isInsideQuote(el, row));
     if (!labelEl) {

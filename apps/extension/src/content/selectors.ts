@@ -5,10 +5,14 @@
  * WhatsApp Web's markup is undocumented and changes without notice. Each entry is
  * an ordered list of fallbacks; the first selector that matches wins.
  *
- * STATUS: written against the publicly known structure of WhatsApp Web
- * (`data-id` message rows, `data-pre-plain-text` labels, `span.selectable-text`).
- * NOT verified against the live UI by the author — requires manual validation
- * (see README → "Manual testing"). If extraction breaks, update this file only.
+ * STATUS (checked against live WhatsApp Web on 2026-11-20, structure only — no message content was read):
+ *  - message rows: div[data-testid="conv-msg-<HEX>"][data-id="<HEX>"] inside role="row";
+ *    data-id NO LONGER contains the chat JID (no "@g.us"), so group detection uses the header subtitle
+ *    (participant list) and the number of distinct senders instead;
+ *  - "[HH:MM, D/M/YYYY] Sender: " labels on div.copyable-text[data-pre-plain-text] inside [data-testid="msg-container"];
+ *  - header: [data-testid="conversation-info-header-chat-title"], [data-testid="chat-subtitle"].
+ * Text extraction, quotes, "read more" and the scroll button are still NOT verified live.
+ * If extraction breaks, update this file only.
  */
 export const SELECTORS = {
   /** App shell — present once WhatsApp Web has loaded. */
@@ -24,8 +28,10 @@ export const SELECTORS = {
     "header span[title]",
     "header [dir='auto']",
   ],
-  /** One element per rendered message bubble row; its data-id encodes chat & message ids. */
-  messageRow: ["[data-id]"],
+  /** Subtitle under the chat title: participant list in groups, "online"/"last seen" in private chats. */
+  chatSubtitle: ['header [data-testid="chat-subtitle"]'],
+  /** One element per rendered message (newest UI first, legacy fallback). */
+  messageRow: ['[data-testid^="conv-msg-"]', "[data-id]"],
   /** Element carrying "[HH:MM, DD/MM/YYYY] Sender: " — present on text messages. */
   prePlainText: ["[data-pre-plain-text]"],
   /** Message body text inside the pre-plain-text element. */
@@ -38,8 +44,16 @@ export const SELECTORS = {
   scrollToBottom: ['[data-testid="scroll-to-bottom"]', '[aria-label="Scroll to bottom"]', '[data-icon="down"]'],
 } as const;
 
-/** Substring of a row's data-id that marks a group chat (WhatsApp group JIDs end with @g.us). */
+/** Legacy UI: substring of a row's data-id that marks a group chat (group JIDs end with @g.us). */
 export const GROUP_ID_MARKER = "@g.us";
+
+/**
+ * A chat is treated as a group only on positive evidence; otherwise it is refused as a possible private chat.
+ * - subtitle lists participants ("Anna, Boris, You") → at least this many commas;
+ * - a private chat can't have more than 2 distinct senders.
+ */
+export const GROUP_MIN_SUBTITLE_COMMAS = 2;
+export const GROUP_MIN_DISTINCT_SENDERS = 3;
 
 /** Text of "read more" buttons in supported UI languages (fallback when no selector matches). */
 export const READ_MORE_TEXTS = ["read more", "читать далее", "ещё", "קרא עוד", "קרא/י עוד"];

@@ -12,34 +12,48 @@ export interface FixtureMsg {
   readMore?: boolean;
 }
 
-const GROUP = "120363000000000001@g.us";
+const LEGACY_GROUP = "120363000000000001@g.us";
 
-export function row(m: FixtureMsg, chatJid = GROUP): string {
-  const dataId = `${m.outgoing ? "true" : "false"}_${chatJid}_${m.id}_972500000000@c.us`;
+/** Current WhatsApp Web markup (checked 2026-11-20): hex data-id, conv-msg-* testid, msg-container. */
+export function row(m: FixtureMsg, opts: { legacyJid?: string } = {}): string {
+  const hexId = `3EB0${m.id}`.padEnd(20, "0");
+  const dataId = opts.legacyJid ? `${m.outgoing ? "true" : "false"}_${opts.legacyJid}_${m.id}_972500000000@c.us` : hexId;
   const quote = m.quote
     ? `<div aria-label="Quoted message"><div class="copyable-text" data-pre-plain-text="${m.quote.label}"><span class="selectable-text">${m.quote.text}</span></div></div>`
     : "";
   const body =
     m.label === undefined
-      ? `<div class="media"><img src="blob:x" /></div>`
+      ? `<div data-testid="image-thumb" role="button"><img src="blob:x" /></div>`
       : `<div class="copyable-text" data-pre-plain-text="${m.label}">${quote}<span dir="auto" class="selectable-text copyable-text">${m.html ?? m.text ?? ""}</span>${
           m.readMore ? '<div role="button">Read more</div>' : ""
         }</div>`;
-  return `<div role="row"><div data-id="${dataId}">${body}</div></div>`;
+  return `<div role="row"><div data-testid="conv-msg-${hexId}" data-id="${dataId}"><div class="focusable-list-item"><div data-testid="msg-container">${body}</div></div></div></div>`;
 }
+
+export { LEGACY_GROUP };
 
 export function buildDoc(
   doc: Document,
-  opts: { title?: string; rows?: string[]; loggedIn?: boolean; chatOpen?: boolean; scrollButton?: boolean },
+  opts: { title?: string; subtitle?: string; rows?: string[]; loggedIn?: boolean; chatOpen?: boolean; scrollButton?: boolean },
 ): Document {
-  const { title = "Родители 3А · גן שושנה", rows = [], loggedIn = true, chatOpen = true, scrollButton = false } = opts;
+  const {
+    title = "Родители 3А · גן שושנה",
+    subtitle = "Анна, Борис, Ганенет, Вы",
+    rows = [],
+    loggedIn = true,
+    chatOpen = true,
+    scrollButton = false,
+  } = opts;
   doc.body.innerHTML = `
     <div id="app">
       ${loggedIn ? '<div id="side"><div id="pane-side"></div></div>' : ""}
       ${
         chatOpen
           ? `<div id="main">
-              <header><span dir="auto" title="${title}">${title}</span></header>
+              <header><div data-testid="conversation-info-header">
+                <span data-testid="conversation-info-header-chat-title" dir="auto">${title}</span>
+                <div data-testid="chat-subtitle"><span>${subtitle}</span></div>
+              </div></header>
               <div class="messages">${rows.join("")}</div>
               ${scrollButton ? '<button data-testid="scroll-to-bottom">↓</button>' : ""}
             </div>`

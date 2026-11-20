@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { extractRenderedMessages, probe } from "../src/content/extractor.ts";
-import { buildDoc, row } from "./dom-fixture.ts";
+import { LEGACY_GROUP, buildDoc, row } from "./dom-fixture.ts";
 
 beforeEach(() => {
   document.body.innerHTML = "";
@@ -19,6 +19,11 @@ const standard = [
   }),
 ];
 
+const privateRows = [
+  row({ id: "P1", label: "[09:00, 20/11/2026] Friend: ", text: "hi" }),
+  row({ id: "P2", label: "[09:01, 20/11/2026] Я: ", text: "hello" }),
+];
+
 describe("probe", () => {
   it("detects a loaded WhatsApp Web with an open group chat", () => {
     buildDoc(document, { rows: standard });
@@ -32,9 +37,36 @@ describe("probe", () => {
     expect(probe(document)).toMatchObject({ whatsappLoaded: true, chatOpen: false });
   });
 
-  it("identifies private chats as not groups", () => {
-    buildDoc(document, { rows: [row({ id: "P1", label: "[09:00, 20/11/2026] Friend: ", text: "hi" }, "972500000009@c.us")] });
+  it("does not treat a private chat as a group (subtitle 'last seen', ≤2 senders)", () => {
+    buildDoc(document, { subtitle: "last seen today at 10:00", rows: privateRows });
     expect(probe(document).isGroup).toBe(false);
+    buildDoc(document, { subtitle: "был(а) 20 нояб., 2026 в 10:00", rows: privateRows });
+    expect(probe(document).isGroup).toBe(false);
+  });
+
+  it("recognises a group by the participant list in the subtitle", () => {
+    buildDoc(document, { subtitle: "Анна, Борис, Вы", rows: privateRows });
+    expect(probe(document).isGroup).toBe(true);
+  });
+
+  it("recognises a group by ≥3 distinct senders when the subtitle shows no list yet", () => {
+    buildDoc(document, { subtitle: "нажмите здесь, чтобы открыть данные группы", rows: standard });
+    expect(probe(document).isGroup).toBe(true);
+  });
+
+  it("refuses a group it can't confirm (2 senders, no participant list) — fails safe", () => {
+    buildDoc(document, { subtitle: "", rows: privateRows });
+    expect(probe(document).isGroup).toBe(false);
+  });
+
+  it("still supports the legacy @g.us data-id format", () => {
+    buildDoc(document, { subtitle: "", rows: [row({ id: "L1", label: "[09:00, 20/11/2026] A: ", text: "x" }, { legacyJid: LEGACY_GROUP })] });
+    expect(probe(document).isGroup).toBe(true);
+  });
+
+  it("returns null when nothing is rendered to decide on", () => {
+    buildDoc(document, { subtitle: "", rows: [] });
+    expect(probe(document).isGroup).toBeNull();
   });
 });
 
@@ -103,7 +135,7 @@ describe("extractRenderedMessages", () => {
   });
 
   it("refuses private chats, missing chats and not-loaded pages", () => {
-    buildDoc(document, { rows: [row({ id: "P1", label: "[09:00, 20/11/2026] Friend: ", text: "hi" }, "972500000009@c.us")] });
+    buildDoc(document, { subtitle: "online", rows: privateRows });
     expect(extractRenderedMessages(document, "DMY")).toMatchObject({ ok: false, code: "not_group" });
     buildDoc(document, { chatOpen: false });
     expect(extractRenderedMessages(document, "DMY")).toMatchObject({ ok: false, code: "no_chat" });
