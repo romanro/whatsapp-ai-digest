@@ -110,7 +110,8 @@ the server allows by default (`ALLOWED_EXTENSION_IDS` in `.env`).
    **Отправить в Groq**.
    Processing runs in the extension's background service worker: you can close the popup. The toolbar badge shows
    “…” while working, ✓ when the summary is ready, ! on error; open the popup to see it.
-7. Read the summary — click a source time under an item to see the original message and its full Russian translation; **Копировать** copies it as text ready to paste into WhatsApp/Telegram for your wife.
+7. Read the summary — click a source time under an item to see the original message and its full Russian translation.
+   Photos you sent that the summary cites (e.g. homework on the board) are shown right there — click to enlarge; **Копировать** copies it as text ready to paste into WhatsApp/Telegram for your wife.
    **Очистить** removes it. ⚙ opens settings.
 
 If the warning **«Период покрыт не полностью»** appears, scroll the chat further up and generate again.
@@ -149,7 +150,7 @@ keep data on your machine only.
 - **This is basic redaction.** Names, children's names, addresses, health details and other free-form content can still
   be present in the text that is sent.
 - The server binds to `127.0.0.1` only, accepts the API only from the allow-listed extension, never logs message text,
-  headers or API keys, and stores nothing on disk. The last summary is kept in Chrome session memory until the browser
+  headers or API keys, and stores nothing on disk. The last summary (and the photos it cites) is kept in Chrome session memory until the browser
   closes or you click “Очистить”.
 - No analytics, telemetry or third-party tracking.
 

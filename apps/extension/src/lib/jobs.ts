@@ -1,4 +1,9 @@
-import type { SummarizeRequest, SummarizeResponse } from "@wad/shared";
+import {
+  SECTION_KEYS,
+  type SectionKey,
+  type SummarizeRequest,
+  type SummarizeResponse,
+} from "@wad/shared";
 
 /**
  * A summary job runs in the extension's service worker so the popup can be closed while the server works
@@ -21,7 +26,10 @@ export interface JobDeps {
   get<T>(key: string): Promise<T | undefined>;
   set(items: Record<string, unknown>): Promise<void>;
   remove(key: string): Promise<void>;
-  summarize(request: SummarizeRequest, signal: AbortSignal): Promise<SummarizeResponse>;
+  summarize(
+    request: SummarizeRequest,
+    signal: AbortSignal,
+  ): Promise<SummarizeResponse>;
   badge(state: BadgeState): void;
   /** Keeps the service worker alive while a job runs; returns a stop function. */
   keepAlive(): () => void;
@@ -31,6 +39,46 @@ export interface JobDeps {
 
 export const JOB_KEY = "job";
 export const RESULT_KEY = "lastResult";
+/** Photos of cited messages, shown next to the summary: { [messageId]: dataUrl[] }. */
+export const PHOTOS_KEY = "lastPhotos";
+export type SummaryPhotos = Record<string, string[]>;
+
+/** chrome.storage.session holds 10 MB in total; leave room for the summary itself. */
+export const PHOTOS_BUDGET_CHARS = 6_000_000;
+
+/** Tasks first: that's where homework photos end up. */
+const PHOTO_PRIORITY: SectionKey[] = [
+  "tasks",
+  ...SECTION_KEYS.filter((k) => k !== "tasks"),
+];
+
+/**
+ * Keeps the photos the user sent whose messages the summary cites, so the user can see the photo itself
+ * (e.g. the homework on the board) — the vision model's reading can be incomplete.
+ */
+export function citedPhotos(
+  result: SummarizeResponse,
+  images: SummarizeRequest["images"],
+  budget = PHOTOS_BUDGET_CHARS,
+): SummaryPhotos {
+  const summary = (result as Partial<SummarizeResponse>).summary;
+  if (!summary || !images.length) return {};
+  const cited: string[] = [];
+  for (const key of PHOTO_PRIORITY) {
+    for (const item of summary[key] ?? [])
+      for (const s of item.sources) if (!cited.includes(s.id)) cited.push(s.id);
+  }
+  const photos: SummaryPhotos = {};
+  let used = 0;
+  for (const id of cited) {
+    for (const img of images.filter((i) => i.messageId === id)) {
+      if (used + img.dataUrl.length > budget) continue;
+      used += img.dataUrl.length;
+      (photos[id] ??= []).push(img.dataUrl);
+    }
+  }
+  return photos;
+}
 export const INTERRUPTED_MESSAGE =
   "Фоновая обработка была прервана (Chrome остановил фоновый процесс расширения). Сформируйте сводку ещё раз.";
 
@@ -43,7 +91,14 @@ export class JobRunner {
   async recoverOnStartup(): Promise<void> {
     const job = await this.deps.get<Job>(JOB_KEY);
     if (job?.status === "running" && !this.controller) {
-      await this.deps.set({ [JOB_KEY]: { ...job, status: "error", error: INTERRUPTED_MESSAGE, finishedAt: this.deps.now() } });
+      await this.deps.set({
+        [JOB_KEY]: {
+          ...job,
+          status: "error",
+          error: INTERRUPTED_MESSAGE,
+          finishedAt: this.deps.now(),
+        },
+      });
       this.deps.badge("error");
     }
   }
@@ -53,8 +108,16 @@ export class JobRunner {
   }
 
   /** Starts a job and returns immediately; `done` resolves when it has finished (used by tests). */
-  async start(request: SummarizeRequest): Promise<{ ok: true; job: Job; done: Promise<void> } | { ok: false; error: string }> {
-    if (this.controller) return { ok: false, error: "Сводка уже готовится — дождитесь её или отмените." };
+  async start(
+    request: SummarizeRequest,
+  ): Promise<
+    { ok: true; job: Job; done: Promise<void> } | { ok: false; error: string }
+  > {
+    if (this.controller)
+      return {
+        ok: false,
+        error: "Сводка уже готовится — дождитесь её или отмените.",
+      };
     const job: Job = {
       id: this.deps.newId(),
       status: "running",
@@ -65,6 +128,7 @@ export class JobRunner {
     };
     const controller = new AbortController();
     this.controller = controller;
+    await this.deps.remove(PHOTOS_KEY);
     await this.deps.set({ [JOB_KEY]: job });
     this.deps.badge("running");
     const stopKeepAlive = this.deps.keepAlive();
@@ -72,15 +136,27 @@ export class JobRunner {
     const done = (async () => {
       try {
         const result = await this.deps.summarize(request, controller.signal);
-        await this.deps.set({ [RESULT_KEY]: result, [JOB_KEY]: { ...job, status: "done", finishedAt: this.deps.now() } });
+        await this.deps.set({
+          [RESULT_KEY]: result,
+          [PHOTOS_KEY]: citedPhotos(result, request.images),
+          [JOB_KEY]: { ...job, status: "done", finishedAt: this.deps.now() },
+        });
         this.deps.badge("done");
       } catch (err) {
         if (controller.signal.aborted) {
           await this.deps.remove(JOB_KEY);
           this.deps.badge(null);
         } else {
-          const error = err instanceof Error ? err.message : "Неизвестная ошибка.";
-          await this.deps.set({ [JOB_KEY]: { ...job, status: "error", error, finishedAt: this.deps.now() } });
+          const error =
+            err instanceof Error ? err.message : "Неизвестная ошибка.";
+          await this.deps.set({
+            [JOB_KEY]: {
+              ...job,
+              status: "error",
+              error,
+              finishedAt: this.deps.now(),
+            },
+          });
           this.deps.badge("error");
         }
       } finally {
@@ -104,4 +180,5 @@ export type BackgroundRequest =
   /** Wakes the service worker (which recovers interrupted jobs) and reports whether a job is really running. */
   | { type: "wad:bg:ping" };
 
-export type BackgroundResponse = { ok: true; job?: Job; running?: boolean } | { ok: false; error: string };
+export type BackgroundResponse =
+  { ok: true; job?: Job; running?: boolean } | { ok: false; error: string };

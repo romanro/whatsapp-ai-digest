@@ -1,5 +1,5 @@
 import type { SummarizeRequest } from "@wad/shared";
-import { JOB_KEY, RESULT_KEY, type BackgroundRequest, type BackgroundResponse, type Job } from "./jobs.ts";
+import { JOB_KEY, PHOTOS_KEY, RESULT_KEY, type SummaryPhotos, type BackgroundRequest, type BackgroundResponse, type Job } from "./jobs.ts";
 import type { ContentRequest, ExtractResponse, ImagesResponse, ProbeResponse } from "./protocol.ts";
 
 export const WHATSAPP_ORIGIN = "https://web.whatsapp.com";
@@ -33,9 +33,16 @@ export async function loadLastResult<T>(): Promise<T | null> {
     return null;
   }
 }
+export async function loadLastPhotos(): Promise<SummaryPhotos> {
+  try {
+    return ((await chrome.storage.session.get(PHOTOS_KEY))[PHOTOS_KEY] as SummaryPhotos | undefined) ?? {};
+  } catch {
+    return {};
+  }
+}
 export async function clearLastResult(): Promise<void> {
   try {
-    await chrome.storage.session.remove([RESULT_KEY, JOB_KEY]);
+    await chrome.storage.session.remove([RESULT_KEY, PHOTOS_KEY, JOB_KEY]);
     await chrome.action.setBadgeText({ text: "" });
   } catch {
     /* non-critical */

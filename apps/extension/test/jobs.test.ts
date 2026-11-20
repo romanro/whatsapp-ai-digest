@@ -1,14 +1,36 @@
 import { describe, expect, it } from "vitest";
 import type { SummarizeRequest, SummarizeResponse } from "@wad/shared";
-import { INTERRUPTED_MESSAGE, JOB_KEY, JobRunner, RESULT_KEY, type BadgeState, type Job, type JobDeps } from "../src/lib/jobs.ts";
+import {
+  INTERRUPTED_MESSAGE,
+  JOB_KEY,
+  JobRunner,
+  RESULT_KEY,
+  citedPhotos,
+  type BadgeState,
+  type Job,
+  type JobDeps,
+} from "../src/lib/jobs.ts";
 
 const request = {
   groupName: "Группа",
   period: "24h",
   clientNow: "2026-11-20T18:00:00+02:00",
   consentConfirmed: true,
-  coverage: { periodStart: "2026-11-19T18:00:00+02:00", oldestLoaded: null, newestLoaded: null, fullyCovered: true, warnings: [] },
-  messages: [{ id: "a", sender: null, timestamp: "2026-11-20T10:00:00+02:00", text: "x" }],
+  coverage: {
+    periodStart: "2026-11-19T18:00:00+02:00",
+    oldestLoaded: null,
+    newestLoaded: null,
+    fullyCovered: true,
+    warnings: [],
+  },
+  messages: [
+    {
+      id: "a",
+      sender: null,
+      timestamp: "2026-11-20T10:00:00+02:00",
+      text: "x",
+    },
+  ],
   images: [{ messageId: "a", dataUrl: "data:image/jpeg;base64,AA==" }],
 } satisfies SummarizeRequest;
 
@@ -19,8 +41,9 @@ function setup(summarize: JobDeps["summarize"]) {
   const badges: BadgeState[] = [];
   let alive = 0;
   const runner = new JobRunner({
-    get: async <T,>(k: string) => store.get(k) as T | undefined,
-    set: async (items) => void Object.entries(items).forEach(([k, v]) => store.set(k, v)),
+    get: async <T>(k: string) => store.get(k) as T | undefined,
+    set: async (items) =>
+      void Object.entries(items).forEach(([k, v]) => store.set(k, v)),
     remove: async (k) => void store.delete(k),
     summarize,
     badge: (b) => badges.push(b),
@@ -40,7 +63,12 @@ describe("JobRunner (background processing)", () => {
     const t = setup(() => new Promise((r) => (release = () => r(result))));
     const started = await t.runner.start(request);
     if (!started.ok) throw new Error(started.error);
-    expect(started.job).toMatchObject({ status: "running", messages: 1, photos: 1, groupName: "Группа" });
+    expect(started.job).toMatchObject({
+      status: "running",
+      messages: 1,
+      photos: 1,
+      groupName: "Группа",
+    });
     expect((t.store.get(JOB_KEY) as Job).status).toBe("running");
     expect(t.alive()).toBe(1);
     release();
@@ -66,14 +94,21 @@ describe("JobRunner (background processing)", () => {
     });
     const started = await t.runner.start(request);
     if (started.ok) await started.done;
-    expect(t.store.get(JOB_KEY)).toMatchObject({ status: "error", error: "Превышен лимит запросов" });
+    expect(t.store.get(JOB_KEY)).toMatchObject({
+      status: "error",
+      error: "Превышен лимит запросов",
+    });
     expect(t.badges.at(-1)).toBe("error");
   });
 
   it("cancels: aborts the request, forgets the job and clears the badge", async () => {
     const t = setup(
       (_req, signal) =>
-        new Promise((_, reject) => signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))),
+        new Promise((_, reject) =>
+          signal.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")),
+          ),
+        ),
     );
     const started = await t.runner.start(request);
     expect(t.runner.cancel()).toBe(true);
@@ -85,9 +120,77 @@ describe("JobRunner (background processing)", () => {
 
   it("marks a job left 'running' by a killed service worker as interrupted", async () => {
     const t = setup(async () => result);
-    t.store.set(JOB_KEY, { id: "old", status: "running", startedAt: 1, groupName: "G", messages: 3, photos: 0 } satisfies Job);
+    t.store.set(JOB_KEY, {
+      id: "old",
+      status: "running",
+      startedAt: 1,
+      groupName: "G",
+      messages: 3,
+      photos: 0,
+    } satisfies Job);
     await t.runner.recoverOnStartup();
-    expect(t.store.get(JOB_KEY)).toMatchObject({ status: "error", error: INTERRUPTED_MESSAGE });
+    expect(t.store.get(JOB_KEY)).toMatchObject({
+      status: "error",
+      error: INTERRUPTED_MESSAGE,
+    });
     expect(t.badges).toEqual(["error"]);
+  });
+});
+
+describe("citedPhotos", () => {
+  const src = (id: string) => ({
+    id,
+    timestamp: "2026-11-20T10:00:00+02:00",
+    sender: null,
+    text: "",
+    translation: null,
+  });
+  const empty = {
+    overview: "",
+    announcements: [],
+    events: [],
+    tasks: [],
+    payments: [],
+    changes: [],
+    other: [],
+  };
+  const img = (messageId: string, n: number) => ({
+    messageId,
+    dataUrl: `data:image/jpeg;base64,${"A".repeat(n)}`,
+  });
+
+  it("keeps only photos of messages the summary cites, tasks first within the budget", () => {
+    const res = {
+      summary: {
+        ...empty,
+        other: [
+          {
+            title: "x",
+            details: null,
+            status: "confirmed",
+            sources: [src("b")],
+          },
+        ],
+        tasks: [
+          {
+            task: "ДЗ",
+            details: null,
+            deadline: null,
+            deadlineText: null,
+            assignee: null,
+            status: "confirmed",
+            sources: [src("a")],
+          },
+        ],
+      },
+    } as unknown as SummarizeResponse;
+    const images = [img("a", 100), img("b", 100), img("c", 10)];
+    expect(Object.keys(citedPhotos(res, images))).toEqual(["a", "b"]);
+    // Budget fits one photo → the homework (task) one wins.
+    expect(Object.keys(citedPhotos(res, images, 150))).toEqual(["a"]);
+  });
+
+  it("returns nothing without a summary or photos", () => {
+    expect(citedPhotos(result, [img("a", 10)])).toEqual({});
   });
 });

@@ -15,11 +15,12 @@ import {
   dismissJob,
   extractFromTab,
   loadJob,
+  loadLastPhotos,
   loadLastResult,
   pingBackground,
   startBackgroundJob,
 } from "../lib/chrome.ts";
-import { JOB_KEY, type Job } from "../lib/jobs.ts";
+import { JOB_KEY, type Job, type SummaryPhotos } from "../lib/jobs.ts";
 import { attachImages, preparePayload, type PreparedPayload } from "../lib/pipeline.ts";
 import type { CapturedImage } from "../lib/protocol.ts";
 import { loadSettings, type Settings } from "../lib/settings.ts";
@@ -40,7 +41,7 @@ type Phase =
   | { kind: "review"; review: Review }
   | { kind: "empty"; coverage: Coverage }
   | { kind: "sending"; job: Job }
-  | { kind: "done"; result: SummarizeResponse }
+  | { kind: "done"; result: SummarizeResponse; photos: SummaryPhotos }
   | { kind: "error"; message: string };
 
 const PERIOD_SHORT: Record<Period, string> = { "24h": "24 часа", "3d": "3 дня", "7d": "7 дней" };
@@ -127,7 +128,7 @@ export function App() {
     if (job?.status === "error") return setPhase({ kind: "error", message: job.error ?? "Ошибка." });
     const result = await loadLastResult<SummarizeResponse>();
     if (result) {
-      setPhase({ kind: "done", result });
+      setPhase({ kind: "done", result, photos: await loadLastPhotos() });
       if (job?.status === "done") void dismissJob(); // seen → clear the ✓ badge
     } else {
       setPhase((ph) => (ph.kind === "sending" ? { kind: "idle" } : ph));
@@ -435,7 +436,7 @@ export function App() {
             </div>
           </div>
           <CoverageWarning coverage={phase.result.coverage} />
-          <SummaryView summary={phase.result.summary} />
+          <SummaryView summary={phase.result.summary} photos={phase.photos} />
           <div className="footnote">
             Сформировано AI ({phase.result.meta.model}
             {phase.result.meta.visionModel ? `, фото: ${phase.result.meta.visionModel}` : ""}). Нажмите на время под пунктом, чтобы
