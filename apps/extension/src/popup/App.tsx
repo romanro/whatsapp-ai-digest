@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   PERIODS,
   PERIOD_LABELS_RU,
@@ -8,8 +8,18 @@ import {
   type Period,
   type SummarizeResponse,
 } from "@wad/shared";
-import { ApiError, requestSummary } from "../lib/api.ts";
-import { captureImagesFromTab, clearLastResult, extractFromTab, loadLastResult, saveLastResult } from "../lib/chrome.ts";
+import {
+  cancelBackgroundJob,
+  captureImagesFromTab,
+  clearLastResult,
+  dismissJob,
+  extractFromTab,
+  loadJob,
+  loadLastResult,
+  pingBackground,
+  startBackgroundJob,
+} from "../lib/chrome.ts";
+import { JOB_KEY, type Job } from "../lib/jobs.ts";
 import { attachImages, preparePayload, type PreparedPayload } from "../lib/pipeline.ts";
 import type { CapturedImage } from "../lib/protocol.ts";
 import { loadSettings, type Settings } from "../lib/settings.ts";
@@ -29,7 +39,7 @@ type Phase =
   | { kind: "extracting"; step: string }
   | { kind: "review"; review: Review }
   | { kind: "empty"; coverage: Coverage }
-  | { kind: "sending"; messages: number; photos: number }
+  | { kind: "sending"; job: Job }
   | { kind: "done"; result: SummarizeResponse }
   | { kind: "error"; message: string };
 
@@ -108,8 +118,21 @@ export function App() {
   const [consentUpload, setConsentUpload] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [copied, setCopied] = useState(false);
-  const abortRef = useRef<AbortController | null>(null);
+  const [now, setNow] = useState(() => Date.now());
   const { status, refresh } = useStatus(settings?.backendUrl ?? null);
+
+  /** Maps the background job (if any) + last result to what the popup shows. */
+  const applyJob = useCallback(async (job: Job | null) => {
+    if (job?.status === "running") return setPhase({ kind: "sending", job });
+    if (job?.status === "error") return setPhase({ kind: "error", message: job.error ?? "Ошибка." });
+    const result = await loadLastResult<SummarizeResponse>();
+    if (result) {
+      setPhase({ kind: "done", result });
+      if (job?.status === "done") void dismissJob(); // seen → clear the ✓ badge
+    } else {
+      setPhase((ph) => (ph.kind === "sending" ? { kind: "idle" } : ph));
+    }
+  }, []);
 
   useEffect(() => {
     void loadSettings().then((s) => {
@@ -117,10 +140,25 @@ export function App() {
       setPeriod(s.defaultPeriod);
       setIncludeImages(s.includeImagesDefault);
     });
-    void loadLastResult<SummarizeResponse>().then((r) => {
-      if (r) setPhase({ kind: "done", result: r });
-    });
-  }, []);
+    void (async () => {
+      let job = await loadJob();
+      // Wake the service worker: if it was stopped mid-job it marks the job as interrupted.
+      if (job?.status === "running") job = (await pingBackground().catch(() => null))?.ok ? await loadJob() : job;
+      await applyJob(job);
+    })();
+    const onChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area === "session" && JOB_KEY in changes) void applyJob((changes[JOB_KEY]?.newValue as Job | undefined) ?? null);
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => chrome.storage.onChanged.removeListener(onChanged);
+  }, [applyJob]);
+
+  const sending = phase.kind === "sending";
+  useEffect(() => {
+    if (!sending) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [sending]);
 
   const probe = status.whatsapp.state === "ok" ? status.whatsapp.data : null;
   const health = status.backend.state === "ok" ? status.backend.data : null;
@@ -130,6 +168,7 @@ export function App() {
   const photosOn = includeImages && visionReady;
   const isGroup = probe?.chatOpen && probe.isGroup === true;
   const busy = phase.kind === "extracting" || phase.kind === "sending";
+  const elapsed = phase.kind === "sending" ? Math.max(0, Math.round((now - phase.job.startedAt) / 1000)) : 0;
   const canGenerate = !!isGroup && !!health && aiReady && consentPermission && consentUpload && !busy && status.tabId !== null;
 
   async function onGenerate() {
@@ -164,24 +203,18 @@ export function App() {
 
   async function onSend(review: Review) {
     if (!settings) return;
-    const { request, photosSent } = attachImages(review.payload, review.photos, review.selected);
+    const { request } = attachImages(review.payload, review.photos, review.selected);
     if (!request.messages.length) {
       return setPhase({ kind: "error", message: "Нечего отправлять: все фото сняты, а текстовых сообщений нет." });
     }
-    const ac = new AbortController();
-    abortRef.current = ac;
-    setPhase({ kind: "sending", messages: request.messages.length, photos: photosSent });
     try {
-      const result = await requestSummary(settings.backendUrl, request, ac.signal);
-      await saveLastResult(result);
-      setPhase({ kind: "done", result });
+      const res = await startBackgroundJob(request);
+      if (!res.ok) return setPhase({ kind: "error", message: res.error });
+      if (res.job) setPhase({ kind: "sending", job: res.job });
       // Consent is per-run: reset after each upload.
       setConsentUpload(false);
-    } catch (err) {
-      if (err instanceof ApiError && err.code === "aborted") return setPhase({ kind: "idle" });
-      setPhase({ kind: "error", message: err instanceof Error ? err.message : "Неизвестная ошибка." });
-    } finally {
-      abortRef.current = null;
+    } catch {
+      setPhase({ kind: "error", message: "Не удалось запустить фоновую обработку. Перезагрузите расширение." });
     }
   }
 
@@ -346,10 +379,14 @@ export function App() {
         <section className="card center">
           <span className="spinner big" />
           <p>
-            {phase.photos > 0 ? `Распознаю ${phase.photos} фото и анализирую` : "Анализирую"} {phase.messages} сообщ.…{" "}
-            {phase.photos > 0 ? "Это может занять несколько минут (лимиты бесплатного тарифа)." : "Это может занять до минуты."}
+            {phase.job.photos > 0 ? `Распознаю ${phase.job.photos} фото и анализирую` : "Анализирую"} {phase.job.messages} сообщ.
+            из «{phase.job.groupName}»… {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}
           </p>
-          <button className="secondary" onClick={() => abortRef.current?.abort()}>
+          <p className="sub">
+            Окно можно закрыть — обработка идёт в фоне. Когда сводка будет готова, на значке расширения появится ✓.
+            {phase.job.photos > 0 ? " С фото это может занять несколько минут (лимиты бесплатного тарифа)." : ""}
+          </p>
+          <button className="secondary" onClick={() => void cancelBackgroundJob()}>
             Отменить
           </button>
         </section>
@@ -366,7 +403,13 @@ export function App() {
         <section className="card error" role="alert">
           <strong>Ошибка</strong>
           <p>{phase.message}</p>
-          <button className="secondary" onClick={() => setPhase({ kind: "idle" })}>
+          <button
+            className="secondary"
+            onClick={() => {
+              void dismissJob();
+              setPhase({ kind: "idle" });
+            }}
+          >
             Понятно
           </button>
         </section>

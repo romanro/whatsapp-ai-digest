@@ -17,10 +17,10 @@ const post = (body: unknown, headers: Record<string, string> = { origin: ORIGIN 
   app.inject({ method: "POST", url: "/api/summarize", headers: { host: "127.0.0.1:3741", "content-type": "application/json", ...headers }, payload: body as object });
 
 describe("config", () => {
-  it("binds to loopback only and defaults to the Groq gpt-oss-20b model", () => {
+  it("binds to loopback only and defaults to the Groq gpt-oss-120b model", () => {
     const c = loadConfig({});
     expect(c.host).toBe("127.0.0.1");
-    expect(c.ai).toMatchObject({ provider: "groq", model: "openai/gpt-oss-20b", baseURL: "https://api.groq.com/openai/v1", apiKey: undefined });
+    expect(c.ai).toMatchObject({ provider: "groq", model: "openai/gpt-oss-120b", baseURL: "https://api.groq.com/openai/v1", apiKey: undefined });
   });
 
   it("supports alternative OpenAI-compatible providers", () => {

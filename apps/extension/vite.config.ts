@@ -16,6 +16,11 @@ export default defineConfig(({ mode }) => ({
       input: {
         popup: resolve(import.meta.dirname, "popup.html"),
         options: resolve(import.meta.dirname, "options.html"),
+        // MV3 service worker (ES module); must sit at a fixed path referenced by the manifest.
+        background: resolve(import.meta.dirname, "src/background.ts"),
+      },
+      output: {
+        entryFileNames: (chunk) => (chunk.name === "background" ? "background.js" : "assets/[name]-[hash].js"),
       },
     },
   },

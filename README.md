@@ -52,8 +52,9 @@ packages/
    ```powershell
    pnpm --filter @wad/server check-model
    ```
-   Default model: `openai/gpt-oss-20b` (listed as a Groq production model as of 2026-11-20). Change `GROQ_MODEL` if it's
-   retired; `openai/gpt-oss-120b` and `llama-3.3-70b-versatile` are alternatives.
+   Default model: `openai/gpt-oss-120b` (Groq production model as of 2026-11-20; same free-tier limits as the 20b model
+   but noticeably better at sorting items into sections). `openai/gpt-oss-20b` is a faster alternative.
+   Photo analysis uses `VISION_MODEL=qwen/qwen3.8-27b` — Groq's only image model, a *preview* model.
 
 ## 3. Install, build and start the backend
 
@@ -107,7 +108,9 @@ the server allows by default (`ALLOWED_EXTENSION_IDS` in `.env`).
 5. Choose the period (24 hours / 3 days / 7 days), tick both confirmations, click **Сформировать сводку**.
 6. Review what will be sent (message count, time range, what was redacted, coverage warnings) and click
    **Отправить в Groq**.
-7. Read the summary; **Копировать** copies it as text ready to paste into WhatsApp/Telegram for your wife.
+   Processing runs in the extension's background service worker: you can close the popup. The toolbar badge shows
+   “…” while working, ✓ when the summary is ready, ! on error; open the popup to see it.
+7. Read the summary — click a source time under an item to see the original message and its full Russian translation; **Копировать** copies it as text ready to paste into WhatsApp/Telegram for your wife.
    **Очистить** removes it. ⚙ opens settings.
 
 If the warning **«Период покрыт не полностью»** appears, scroll the chat further up and generate again.
@@ -189,7 +192,8 @@ If any step fails, inspect the DOM (DevTools on the WhatsApp tab) and update `se
 | Variable | Default | Meaning |
 |---|---|---|
 | `GROQ_API_KEY` | — | Groq key (required for Groq) |
-| `GROQ_MODEL` | `openai/gpt-oss-20b` | Groq model |
+| `GROQ_MODEL` | `openai/gpt-oss-120b` | Groq model for summaries |
+| `VISION_MODEL` | `qwen/qwen3.8-27b` | Model for opt-in photo analysis; `off` disables it |
 | `AI_PROVIDER` | `groq` | `groq`, `openai`, `gemini` or `ollama` |
 | `AI_API_KEY` / `AI_BASE_URL` / `AI_MODEL` | — | For non-Groq providers |
 | `PORT` | `3741` | Local port (loopback only) |

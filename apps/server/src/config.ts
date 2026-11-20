@@ -10,7 +10,7 @@ loadDotenv({ path: path.resolve(here, "../.env"), quiet: true });
 
 const PROVIDER_PRESETS = {
   // qwen/qwen3.8-27b is Groq's only image-capable model as of 2026-11-20 (a *preview* model — may change).
-  groq: { baseURL: "https://api.groq.com/openai/v1", defaultModel: "openai/gpt-oss-20b", defaultVisionModel: "qwen/qwen3.8-27b" },
+  groq: { baseURL: "https://api.groq.com/openai/v1", defaultModel: "openai/gpt-oss-120b", defaultVisionModel: "qwen/qwen3.8-27b" },
   openai: { baseURL: "https://api.openai.com/v1", defaultModel: "gpt-4o-mini", defaultVisionModel: "gpt-4o-mini" },
   gemini: { baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/", defaultModel: "gemini-2.0-flash", defaultVisionModel: "gemini-2.0-flash" },
   ollama: { baseURL: "http://127.0.0.1:11434/v1", defaultModel: "llama3.1", defaultVisionModel: null },
