@@ -14,7 +14,7 @@ let app: FastifyInstance;
 afterEach(async () => app?.close());
 
 const post = (body: unknown, headers: Record<string, string> = { origin: ORIGIN }) =>
-  app.inject({ method: "POST", url: "/api/summarize", headers: { host: "127.0.0.1:3001", "content-type": "application/json", ...headers }, payload: body as object });
+  app.inject({ method: "POST", url: "/api/summarize", headers: { host: "127.0.0.1:3741", "content-type": "application/json", ...headers }, payload: body as object });
 
 describe("config", () => {
   it("binds to loopback only and defaults to the Groq gpt-oss-20b model", () => {
@@ -31,7 +31,7 @@ describe("config", () => {
 describe("GET /health", () => {
   it("reports configuration without exposing secrets", async () => {
     app = buildApp(config, new FakeProvider([]));
-    const res = await app.inject({ method: "GET", url: "/health", headers: { host: "127.0.0.1:3001" } });
+    const res = await app.inject({ method: "GET", url: "/health", headers: { host: "127.0.0.1:3741" } });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ status: "ok", ai: { configured: true, modelAvailable: true, model: "fake-model" } });
     expect(res.body).not.toContain("gsk_test_secret_value");
@@ -57,13 +57,13 @@ describe("POST /api/summarize", () => {
     const ok = await app.inject({
       method: "OPTIONS",
       url: "/api/summarize",
-      headers: { host: "127.0.0.1:3001", origin: ORIGIN, "access-control-request-method": "POST" },
+      headers: { host: "127.0.0.1:3741", origin: ORIGIN, "access-control-request-method": "POST" },
     });
     expect(ok.headers["access-control-allow-origin"]).toBe(ORIGIN);
     const bad = await app.inject({
       method: "OPTIONS",
       url: "/api/summarize",
-      headers: { host: "127.0.0.1:3001", origin: "https://evil.example.com", "access-control-request-method": "POST" },
+      headers: { host: "127.0.0.1:3741", origin: "https://evil.example.com", "access-control-request-method": "POST" },
     });
     expect(bad.headers["access-control-allow-origin"]).toBeUndefined();
   });

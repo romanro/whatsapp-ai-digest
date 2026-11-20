@@ -27,7 +27,7 @@ namespace WadTray
         private readonly ToolStripMenuItem _miStatus, _miAi, _miStart, _miStop, _miRestart, _miAutostart, _miEnv, _miLog, _miFolder;
 
         private string _repo, _node, _setupProblem, _lastError;
-        private int _port = 3001;
+        private int _port = 3741;
         private ServerState _state = ServerState.Stopped;
         private HealthInfo _health = new HealthInfo();
         private DateTime _startedAt;

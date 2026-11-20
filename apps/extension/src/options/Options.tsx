@@ -15,7 +15,7 @@ export function Options() {
   async function onSave() {
     const url = s.backendUrl.trim().replace(/\/*$/, "/");
     if (!isLocalBackendUrl(url)) {
-      setUrlError("Разрешён только локальный адрес вида http://127.0.0.1:3001");
+      setUrlError("Разрешён только локальный адрес вида http://127.0.0.1:3741");
       return;
     }
     setUrlError(null);

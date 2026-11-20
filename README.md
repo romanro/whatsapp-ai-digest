@@ -7,7 +7,7 @@ and other important information — each item with the original message timestam
 ```
 Chrome popup (React) ──► content script (reads visible messages of the open group, on click only)
         │
-        └─ redacted, user-confirmed JSON ──► local Fastify server 127.0.0.1:3001 ──► Groq API (OpenAI-compatible)
+        └─ redacted, user-confirmed JSON ──► local Fastify server 127.0.0.1:3741 ──► Groq API (OpenAI-compatible)
 ```
 
 > ⚠️ **Status of the WhatsApp integration:** the DOM selectors in
@@ -60,7 +60,7 @@ packages/
 ```powershell
 pnpm install
 pnpm build        # builds the extension into apps\extension\dist
-pnpm start        # starts the local server on http://127.0.0.1:3001
+pnpm start        # starts the local server on http://127.0.0.1:3741
 ```
 
 Keep that window open while using the extension. For development, `pnpm dev` runs the server in watch mode and
@@ -119,7 +119,7 @@ If the warning **«Период покрыт не полностью»** appears
 | “Локальный сервер не запущен” | Start the tray app, or run `pnpm start` and keep the window open. |
 | Tray icon gray, “Не найден Node.js” | Install Node.js 22+ and restart the tray app (it looks in PATH, Program Files and nvm-windows). |
 | Tray: “Зависимости не установлены” | Run `pnpm install` in the project folder. |
-| Server says “Port 3001 is already used by another program” | Another app uses 3001. Stop it, or set `PORT=3002` in `apps\server\.env` and `http://127.0.0.1:3002` in extension settings. |
+| Server says “Port 3741 is already used by another program” | Another app uses 3741. Stop it, or set `PORT=3742` in `apps\server\.env` and `http://127.0.0.1:3742` in extension settings. |
 | AI status “нет” / “API-ключ не настроен” | Set `GROQ_API_KEY` in `apps\server\.env`, restart the server. Run `pnpm --filter @wad/server check-model`. |
 | “Модель … недоступна” | The model was retired — set another `GROQ_MODEL`. |
 | “Превышен лимит запросов” (429) | Groq free tier limits (≈8K tokens/min for gpt-oss). Wait a minute; choose a shorter period; lower `BATCH_MAX_CHARS`. |
@@ -192,7 +192,7 @@ If any step fails, inspect the DOM (DevTools on the WhatsApp tab) and update `se
 | `GROQ_MODEL` | `openai/gpt-oss-20b` | Groq model |
 | `AI_PROVIDER` | `groq` | `groq`, `openai`, `gemini` or `ollama` |
 | `AI_API_KEY` / `AI_BASE_URL` / `AI_MODEL` | — | For non-Groq providers |
-| `PORT` | `3001` | Local port (loopback only) |
+| `PORT` | `3741` | Local port (loopback only) |
 | `ALLOWED_EXTENSION_IDS` | `fjldfeefkijllcoohbgfdodnkoeoedkg` | Comma-separated extension IDs allowed to call the API |
 | `BATCH_MAX_CHARS` | `12000` | Message characters per AI request; larger chats are batched and merged |
 | `LOG_LEVEL` | `info` | Never logs message content |

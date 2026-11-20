@@ -89,7 +89,7 @@ namespace WadTray
             }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
-            return 3001;
+            return 3741;
         }
 
         private static string TryCombine(string dir, string file)

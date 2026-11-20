@@ -1,5 +1,5 @@
-export const DEFAULT_BACKEND_URL = "http://127.0.0.1:3001";
-export const BACKEND_PORT = 3001;
+export const DEFAULT_BACKEND_URL = "http://127.0.0.1:3741";
+export const BACKEND_PORT = 3741;
 
 export const PERIODS = ["24h", "3d", "7d"] as const;
 export type Period = (typeof PERIODS)[number];
