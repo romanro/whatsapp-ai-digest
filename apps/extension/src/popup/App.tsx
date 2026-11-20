@@ -21,12 +21,19 @@ import {
   startBackgroundJob,
 } from "../lib/chrome.ts";
 import { JOB_KEY, type Job, type SummaryPhotos } from "../lib/jobs.ts";
-import { attachImages, preparePayload, type PreparedPayload } from "../lib/pipeline.ts";
+import {
+  attachImages,
+  preparePayload,
+  type PreparedPayload,
+} from "../lib/pipeline.ts";
 import type { CapturedImage } from "../lib/protocol.ts";
 import { loadSettings, type Settings } from "../lib/settings.ts";
 import { SummaryView } from "./SummaryView.tsx";
 import { useStatus, type Check } from "./useStatus.ts";
 import { NOT_GROUP_MESSAGE } from "../content/extractor.ts";
+
+/** The popup page can also be opened in a full browser tab (⤢) to read a long summary and its photos. */
+const IN_TAB = new URLSearchParams(location.search).has("tab");
 
 interface Review {
   payload: PreparedPayload;
@@ -44,11 +51,23 @@ type Phase =
   | { kind: "done"; result: SummarizeResponse; photos: SummaryPhotos }
   | { kind: "error"; message: string };
 
-const PERIOD_SHORT: Record<Period, string> = { "24h": "24 часа", "3d": "3 дня", "7d": "7 дней" };
+const PERIOD_SHORT: Record<Period, string> = {
+  "24h": "24 часа",
+  "3d": "3 дня",
+  "7d": "7 дней",
+};
 
 type SimpleCheck = { state: "ok" | "fail" | "checking"; message?: string };
 
-function StatusRow({ label, check, okText }: { label: string; check: Check<unknown> | SimpleCheck; okText?: string }) {
+function StatusRow({
+  label,
+  check,
+  okText,
+}: {
+  label: string;
+  check: Check<unknown> | SimpleCheck;
+  okText?: string;
+}) {
   return (
     <div className={`status-row status-${check.state}`}>
       <span className="dot" aria-hidden>
@@ -56,9 +75,15 @@ function StatusRow({ label, check, okText }: { label: string; check: Check<unkno
       </span>
       <span className="status-label">{label}</span>
       <span className="status-text">
-        {check.state === "checking" ? "проверка…" : check.state === "ok" ? (okText ?? "OK") : "нет"}
+        {check.state === "checking"
+          ? "проверка…"
+          : check.state === "ok"
+            ? (okText ?? "OK")
+            : "нет"}
       </span>
-      {check.state === "fail" && "message" in check && check.message && <div className="status-hint">{check.message}</div>}
+      {check.state === "fail" && "message" in check && check.message && (
+        <div className="status-hint">{check.message}</div>
+      )}
     </div>
   );
 }
@@ -67,7 +92,9 @@ function CoverageWarning({ coverage }: { coverage: Coverage }) {
   if (coverage.fullyCovered && coverage.warnings.length === 0) return null;
   return (
     <div className={coverage.fullyCovered ? "notice" : "warning"} role="status">
-      <strong>{coverage.fullyCovered ? "Примечания" : "⚠️ Период покрыт не полностью"}</strong>
+      <strong>
+        {coverage.fullyCovered ? "Примечания" : "⚠️ Период покрыт не полностью"}
+      </strong>
       <ul>
         {coverage.warnings.map((w, i) => (
           <li key={i}>{w}</li>
@@ -77,7 +104,13 @@ function CoverageWarning({ coverage }: { coverage: Coverage }) {
   );
 }
 
-function PhotoPicker({ review, onToggle }: { review: Review; onToggle: (ref: string) => void }) {
+function PhotoPicker({
+  review,
+  onToggle,
+}: {
+  review: Review;
+  onToggle: (ref: string) => void;
+}) {
   const usable = review.photos.filter((p) => p.dataUrl);
   const failed = review.photos.length - usable.length;
   const byRef = new Map(review.payload.imageCandidates.map((c) => [c.ref, c]));
@@ -86,27 +119,48 @@ function PhotoPicker({ review, onToggle }: { review: Review; onToggle: (ref: str
     <div className="photos">
       <div className="photos-head">
         <strong>
-          Фото: выбрано {usable.filter((p) => review.selected.has(p.ref)).length} из {usable.length}
+          Фото: выбрано{" "}
+          {usable.filter((p) => review.selected.has(p.ref)).length} из{" "}
+          {usable.length}
         </strong>
-        <span className="sub">Снимите отметку с фото, где видны дети или личные данные.</span>
+        <span className="sub">
+          Снимите отметку с фото, где видны дети или личные данные.
+        </span>
       </div>
       <div className="photo-grid">
         {usable.map((p) => {
           const c = byRef.get(p.ref);
           const on = review.selected.has(p.ref);
           return (
-            <label key={p.ref} className={`photo ${on ? "on" : "off"}`} title={c ? `${formatWallTime(c.timestamp)} · ${c.sender ?? ""}` : ""}>
+            <label
+              key={p.ref}
+              className={`photo ${on ? "on" : "off"}`}
+              title={
+                c ? `${formatWallTime(c.timestamp)} · ${c.sender ?? ""}` : ""
+              }
+            >
               <img src={p.dataUrl ?? ""} alt="" />
-              <input type="checkbox" checked={on} onChange={() => onToggle(p.ref)} />
+              <input
+                type="checkbox"
+                checked={on}
+                onChange={() => onToggle(p.ref)}
+              />
               <span className="photo-meta">
                 {c ? formatWallTime(c.timestamp) : ""}
-                {Math.max(p.width, p.height) < 700 ? " · низкое разрешение" : ""}
+                {Math.max(p.width, p.height) < 700
+                  ? " · низкое разрешение"
+                  : ""}
               </span>
             </label>
           );
         })}
       </div>
-      {failed > 0 && <div className="sub">{failed} фото не удалось прочитать со страницы (прокрутите к ним и повторите).</div>}
+      {failed > 0 && (
+        <div className="sub">
+          {failed} фото не удалось прочитать со страницы (прокрутите к ним и
+          повторите).
+        </div>
+      )}
     </div>
   );
 }
@@ -125,7 +179,8 @@ export function App() {
   /** Maps the background job (if any) + last result to what the popup shows. */
   const applyJob = useCallback(async (job: Job | null) => {
     if (job?.status === "running") return setPhase({ kind: "sending", job });
-    if (job?.status === "error") return setPhase({ kind: "error", message: job.error ?? "Ошибка." });
+    if (job?.status === "error")
+      return setPhase({ kind: "error", message: job.error ?? "Ошибка." });
     const result = await loadLastResult<SummarizeResponse>();
     if (result) {
       setPhase({ kind: "done", result, photos: await loadLastPhotos() });
@@ -144,11 +199,18 @@ export function App() {
     void (async () => {
       let job = await loadJob();
       // Wake the service worker: if it was stopped mid-job it marks the job as interrupted.
-      if (job?.status === "running") job = (await pingBackground().catch(() => null))?.ok ? await loadJob() : job;
+      if (job?.status === "running")
+        job = (await pingBackground().catch(() => null))?.ok
+          ? await loadJob()
+          : job;
       await applyJob(job);
     })();
-    const onChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
-      if (area === "session" && JOB_KEY in changes) void applyJob((changes[JOB_KEY]?.newValue as Job | undefined) ?? null);
+    const onChanged = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      area: string,
+    ) => {
+      if (area === "session" && JOB_KEY in changes)
+        void applyJob((changes[JOB_KEY]?.newValue as Job | undefined) ?? null);
     };
     chrome.storage.onChanged.addListener(onChanged);
     return () => chrome.storage.onChanged.removeListener(onChanged);
@@ -169,26 +231,58 @@ export function App() {
   const photosOn = includeImages && visionReady;
   const isGroup = probe?.chatOpen && probe.isGroup === true;
   const busy = phase.kind === "extracting" || phase.kind === "sending";
-  const elapsed = phase.kind === "sending" ? Math.max(0, Math.round((now - phase.job.startedAt) / 1000)) : 0;
-  const canGenerate = !!isGroup && !!health && aiReady && consentPermission && consentUpload && !busy && status.tabId !== null;
+  const elapsed =
+    phase.kind === "sending"
+      ? Math.max(0, Math.round((now - phase.job.startedAt) / 1000))
+      : 0;
+  const canGenerate =
+    !!isGroup &&
+    !!health &&
+    aiReady &&
+    consentPermission &&
+    consentUpload &&
+    !busy &&
+    status.tabId !== null;
 
   async function onGenerate() {
     if (!settings || status.tabId === null) return;
     setPhase({ kind: "extracting", step: "Читаю сообщения…" });
     try {
-      const res = await extractFromTab(status.tabId, settings.dateOrderFallback);
+      const res = await extractFromTab(
+        status.tabId,
+        settings.dateOrderFallback,
+      );
       if (!res.ok) return setPhase({ kind: "error", message: res.message });
-      const prepared = preparePayload(res, period, new Date(), { includeImages: photosOn, maxImages: settings.maxImages });
-      if ("empty" in prepared) return setPhase({ kind: "empty", coverage: prepared.coverage });
+      const prepared = preparePayload(res, period, new Date(), {
+        includeImages: photosOn,
+        maxImages: settings.maxImages,
+      });
+      if ("empty" in prepared)
+        return setPhase({ kind: "empty", coverage: prepared.coverage });
       let photos: CapturedImage[] = [];
       if (photosOn && prepared.imageCandidates.length) {
-        setPhase({ kind: "extracting", step: `Читаю ${prepared.imageCandidates.length} фото со страницы…` });
-        photos = await captureImagesFromTab(status.tabId, prepared.imageCandidates.map((c) => c.ref));
+        setPhase({
+          kind: "extracting",
+          step: `Читаю ${prepared.imageCandidates.length} фото со страницы…`,
+        });
+        photos = await captureImagesFromTab(
+          status.tabId,
+          prepared.imageCandidates.map((c) => c.ref),
+        );
       }
-      const selected = new Set(photos.filter((p) => p.dataUrl).map((p) => p.ref));
-      setPhase({ kind: "review", review: { payload: prepared, photos, selected } });
+      const selected = new Set(
+        photos.filter((p) => p.dataUrl).map((p) => p.ref),
+      );
+      setPhase({
+        kind: "review",
+        review: { payload: prepared, photos, selected },
+      });
     } catch {
-      setPhase({ kind: "error", message: "Не удалось прочитать сообщения. Обновите вкладку WhatsApp и попробуйте снова." });
+      setPhase({
+        kind: "error",
+        message:
+          "Не удалось прочитать сообщения. Обновите вкладку WhatsApp и попробуйте снова.",
+      });
     }
   }
 
@@ -204,9 +298,17 @@ export function App() {
 
   async function onSend(review: Review) {
     if (!settings) return;
-    const { request } = attachImages(review.payload, review.photos, review.selected);
+    const { request } = attachImages(
+      review.payload,
+      review.photos,
+      review.selected,
+    );
     if (!request.messages.length) {
-      return setPhase({ kind: "error", message: "Нечего отправлять: все фото сняты, а текстовых сообщений нет." });
+      return setPhase({
+        kind: "error",
+        message:
+          "Нечего отправлять: все фото сняты, а текстовых сообщений нет.",
+      });
     }
     try {
       const res = await startBackgroundJob(request);
@@ -215,7 +317,11 @@ export function App() {
       // Consent is per-run: reset after each upload.
       setConsentUpload(false);
     } catch {
-      setPhase({ kind: "error", message: "Не удалось запустить фоновую обработку. Перезагрузите расширение." });
+      setPhase({
+        kind: "error",
+        message:
+          "Не удалось запустить фоновую обработку. Перезагрузите расширение.",
+      });
     }
   }
 
@@ -245,11 +351,14 @@ export function App() {
         : probe.isGroup === false
           ? { state: "fail", message: NOT_GROUP_MESSAGE }
           : probe.isGroup === null
-            ? { state: "fail", message: "Тип чата не определён (нет сообщений на экране)." }
+            ? {
+                state: "fail",
+                message: "Тип чата не определён (нет сообщений на экране).",
+              }
             : { state: "ok" };
 
   return (
-    <div className="popup">
+    <div className={IN_TAB ? "popup in-tab" : "popup"}>
       <header className="topbar">
         <div className="brand">
           <span className="logo" aria-hidden>
@@ -261,26 +370,65 @@ export function App() {
           </div>
         </div>
         <div className="topbar-actions">
-          <button className="icon-btn" onClick={() => void refresh()} title="Обновить статус" aria-label="Обновить статус" disabled={busy}>
+          <button
+            className="icon-btn"
+            onClick={() => void refresh()}
+            title="Обновить статус"
+            aria-label="Обновить статус"
+            disabled={busy}
+          >
             ↻
           </button>
-          <button className="icon-btn" onClick={() => void chrome.runtime.openOptionsPage()} title="Настройки" aria-label="Настройки">
+          {!IN_TAB && (
+            <button
+              className="icon-btn"
+              onClick={() =>
+                void chrome.tabs.create({
+                  url: chrome.runtime.getURL("popup.html?tab=1"),
+                })
+              }
+              title="Открыть во вкладке (на весь экран)"
+              aria-label="Открыть во вкладке"
+            >
+              ⤢
+            </button>
+          )}
+          <button
+            className="icon-btn"
+            onClick={() => void chrome.runtime.openOptionsPage()}
+            title="Настройки"
+            aria-label="Настройки"
+          >
             ⚙
           </button>
         </div>
       </header>
 
       <section className="card status">
-        <StatusRow label="WhatsApp Web" check={status.whatsapp} okText="найден" />
-        <StatusRow label="Локальный сервер" check={status.backend} okText="подключён" />
+        <StatusRow
+          label="WhatsApp Web"
+          check={status.whatsapp}
+          okText="найден"
+        />
+        <StatusRow
+          label="Локальный сервер"
+          check={status.backend}
+          okText="подключён"
+        />
         <StatusRow
           label="AI (Groq)"
           check={
             status.backend.state !== "ok"
-              ? { state: status.backend.state === "checking" ? "checking" : "fail" }
+              ? {
+                  state:
+                    status.backend.state === "checking" ? "checking" : "fail",
+                }
               : aiReady
                 ? { state: "ok" }
-                : { state: "fail", message: health?.ai.message ?? "API-ключ не настроен." }
+                : {
+                    state: "fail",
+                    message: health?.ai.message ?? "API-ключ не настроен.",
+                  }
           }
           okText={health ? health.ai.model : "OK"}
         />
@@ -288,21 +436,44 @@ export function App() {
 
       <section className="card">
         <div className="label">Текущая группа</div>
-        <div className={`group-name ${groupCheck.state}`}>{probe?.groupName && probe.chatOpen ? probe.groupName : "—"}</div>
-        {groupCheck.state === "fail" && groupCheck.message && <div className="hint">{groupCheck.message}</div>}
+        <div className={`group-name ${groupCheck.state}`}>
+          {probe?.groupName && probe.chatOpen ? probe.groupName : "—"}
+        </div>
+        {groupCheck.state === "fail" && groupCheck.message && (
+          <div className="hint">{groupCheck.message}</div>
+        )}
 
         <div className="label mt">Период</div>
         <div className="segmented" role="radiogroup" aria-label="Период">
           {PERIODS.map((p) => (
-            <button key={p} role="radio" aria-checked={period === p} className={period === p ? "active" : ""} onClick={() => setPeriod(p)} disabled={busy}>
+            <button
+              key={p}
+              role="radio"
+              aria-checked={period === p}
+              className={period === p ? "active" : ""}
+              onClick={() => setPeriod(p)}
+              disabled={busy}
+            >
               {PERIOD_SHORT[p]}
             </button>
           ))}
         </div>
 
         {visionModel && (
-          <label className="toggle mt" title={visionReady ? `Модель: ${visionModel}` : "Модель для фото недоступна"}>
-            <input type="checkbox" checked={photosOn} disabled={busy || !visionReady} onChange={(e) => setIncludeImages(e.target.checked)} />
+          <label
+            className="toggle mt"
+            title={
+              visionReady
+                ? `Модель: ${visionModel}`
+                : "Модель для фото недоступна"
+            }
+          >
+            <input
+              type="checkbox"
+              checked={photosOn}
+              disabled={busy || !visionReady}
+              onChange={(e) => setIncludeImages(e.target.checked)}
+            />
             <span>
               Анализировать фото <span className="beta">бета</span>
               <span className="sub block">
@@ -316,23 +487,40 @@ export function App() {
 
         <div className="consent">
           <label>
-            <input type="checkbox" checked={consentPermission} onChange={(e) => setConsentPermission(e.target.checked)} disabled={busy} />
-            <span>Я подтверждаю, что имею право обрабатывать сообщения этой группы.</span>
+            <input
+              type="checkbox"
+              checked={consentPermission}
+              onChange={(e) => setConsentPermission(e.target.checked)}
+              disabled={busy}
+            />
+            <span>
+              Я подтверждаю, что имею право обрабатывать сообщения этой группы.
+            </span>
           </label>
           <label>
-            <input type="checkbox" checked={consentUpload} onChange={(e) => setConsentUpload(e.target.checked)} disabled={busy} />
+            <input
+              type="checkbox"
+              checked={consentUpload}
+              onChange={(e) => setConsentUpload(e.target.checked)}
+              disabled={busy}
+            />
             <span>
-              Я согласен(на), что текст выбранных сообщений{photosOn ? " и выбранные фото" : ""} будут отправлены в Groq для
-              анализа. Автоматическое чтение может противоречить условиям использования WhatsApp.
+              Я согласен(на), что текст выбранных сообщений
+              {photosOn ? " и выбранные фото" : ""} будут отправлены в Groq для
+              анализа. Автоматическое чтение может противоречить условиям
+              использования WhatsApp.
             </span>
           </label>
           <details className="privacy">
             <summary>Конфиденциальность</summary>
             <p>
-              Расширение только читает уже показанные на экране сообщения открытой группы — ничего не отправляет в WhatsApp и не
-              меняет. Перед отправкой номера телефонов, email и номера карт скрываются, а номера вместо имён заменяются на
-              «Участник N». Имена, детали и свободный текст всё равно могут содержать личные данные — они будут переданы в Groq
-              (облачный AI-сервис) через ваш локальный сервер.
+              Расширение только читает уже показанные на экране сообщения
+              открытой группы — ничего не отправляет в WhatsApp и не меняет.
+              Перед отправкой номера телефонов, email и номера карт скрываются,
+              а номера вместо имён заменяются на «Участник N». Имена, детали и
+              свободный текст всё равно могут содержать личные данные — они
+              будут переданы в Groq (облачный AI-сервис) через ваш локальный
+              сервер.
               {photosOn &&
                 " Фото отправляются как есть (без размытия лиц и скрытия данных) — отправляйте только те, что не содержат лишнего."}{" "}
               Сообщения не сохраняются на диск и не попадают в журналы.
@@ -340,7 +528,11 @@ export function App() {
           </details>
         </div>
 
-        <button className="primary" disabled={!canGenerate} onClick={() => void onGenerate()}>
+        <button
+          className="primary"
+          disabled={!canGenerate}
+          onClick={() => void onGenerate()}
+        >
           {phase.kind === "extracting" ? <span className="spinner" /> : null}
           {phase.kind === "extracting" ? phase.step : "Сформировать сводку"}
         </button>
@@ -351,25 +543,45 @@ export function App() {
           <h2>Проверьте перед отправкой</h2>
           <ul className="facts">
             <li>
-              Сообщений за период: <b>{phase.review.payload.request.messages.length}</b>
+              Сообщений за период:{" "}
+              <b>{phase.review.payload.request.messages.length}</b>
             </li>
             <li>
-              Первое: <b>{formatWallTime(phase.review.payload.request.messages[0]?.timestamp ?? "")}</b>, последнее:{" "}
-              <b>{formatWallTime(phase.review.payload.request.messages.at(-1)?.timestamp ?? "")}</b>
+              Первое:{" "}
+              <b>
+                {formatWallTime(
+                  phase.review.payload.request.messages[0]?.timestamp ?? "",
+                )}
+              </b>
+              , последнее:{" "}
+              <b>
+                {formatWallTime(
+                  phase.review.payload.request.messages.at(-1)?.timestamp ?? "",
+                )}
+              </b>
             </li>
             <li>
-              Скрыто: телефонов {phase.review.payload.redactions.phones}, email {phase.review.payload.redactions.emails}, карт{" "}
-              {phase.review.payload.redactions.cards + phase.review.payload.redactions.ibans}; псевдонимов участников{" "}
+              Скрыто: телефонов {phase.review.payload.redactions.phones}, email{" "}
+              {phase.review.payload.redactions.emails}, карт{" "}
+              {phase.review.payload.redactions.cards +
+                phase.review.payload.redactions.ibans}
+              ; псевдонимов участников{" "}
               {phase.review.payload.pseudonymizedSenders}
             </li>
           </ul>
           <PhotoPicker review={phase.review} onToggle={togglePhoto} />
           <CoverageWarning coverage={phase.review.payload.coverage} />
           <div className="row">
-            <button className="secondary" onClick={() => setPhase({ kind: "idle" })}>
+            <button
+              className="secondary"
+              onClick={() => setPhase({ kind: "idle" })}
+            >
               Отмена
             </button>
-            <button className="primary" onClick={() => void onSend(phase.review)}>
+            <button
+              className="primary"
+              onClick={() => void onSend(phase.review)}
+            >
               Отправить в Groq
             </button>
           </div>
@@ -380,14 +592,23 @@ export function App() {
         <section className="card center">
           <span className="spinner big" />
           <p>
-            {phase.job.photos > 0 ? `Распознаю ${phase.job.photos} фото и анализирую` : "Анализирую"} {phase.job.messages} сообщ.
-            из «{phase.job.groupName}»… {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}
+            {phase.job.photos > 0
+              ? `Распознаю ${phase.job.photos} фото и анализирую`
+              : "Анализирую"}{" "}
+            {phase.job.messages} сообщ. из «{phase.job.groupName}»…{" "}
+            {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}
           </p>
           <p className="sub">
-            Окно можно закрыть — обработка идёт в фоне. Когда сводка будет готова, на значке расширения появится ✓.
-            {phase.job.photos > 0 ? " С фото это может занять несколько минут (лимиты бесплатного тарифа)." : ""}
+            Окно можно закрыть — обработка идёт в фоне. Когда сводка будет
+            готова, на значке расширения появится ✓.
+            {phase.job.photos > 0
+              ? " С фото это может занять несколько минут (лимиты бесплатного тарифа)."
+              : ""}
           </p>
-          <button className="secondary" onClick={() => void cancelBackgroundJob()}>
+          <button
+            className="secondary"
+            onClick={() => void cancelBackgroundJob()}
+          >
             Отменить
           </button>
         </section>
@@ -395,7 +616,10 @@ export function App() {
 
       {phase.kind === "empty" && (
         <section className="card">
-          <p>За выбранный период в загруженной части чата нет сообщений для анализа.</p>
+          <p>
+            За выбранный период в загруженной части чата нет сообщений для
+            анализа.
+          </p>
           <CoverageWarning coverage={phase.coverage} />
         </section>
       )}
@@ -422,12 +646,18 @@ export function App() {
             <div>
               <h2>{phase.result.groupName}</h2>
               <div className="sub">
-                {PERIOD_LABELS_RU[phase.result.period]} · {phase.result.meta.messagesAnalyzed} сообщ.
-                {phase.result.meta.imagesAnalyzed > 0 ? ` · ${phase.result.meta.imagesAnalyzed} фото` : ""}
+                {PERIOD_LABELS_RU[phase.result.period]} ·{" "}
+                {phase.result.meta.messagesAnalyzed} сообщ.
+                {phase.result.meta.imagesAnalyzed > 0
+                  ? ` · ${phase.result.meta.imagesAnalyzed} фото`
+                  : ""}
               </div>
             </div>
             <div className="row tight">
-              <button className="secondary" onClick={() => void onCopy(phase.result)}>
+              <button
+                className="secondary"
+                onClick={() => void onCopy(phase.result)}
+              >
                 {copied ? "Скопировано ✓" : "Копировать"}
               </button>
               <button className="ghost" onClick={() => void onClear()}>
@@ -439,8 +669,11 @@ export function App() {
           <SummaryView summary={phase.result.summary} photos={phase.photos} />
           <div className="footnote">
             Сформировано AI ({phase.result.meta.model}
-            {phase.result.meta.visionModel ? `, фото: ${phase.result.meta.visionModel}` : ""}). Нажмите на время под пунктом, чтобы
-            увидеть исходное сообщение и перевод.
+            {phase.result.meta.visionModel
+              ? `, фото: ${phase.result.meta.visionModel}`
+              : ""}
+            ). Нажмите на время под пунктом, чтобы увидеть исходное сообщение и
+            перевод.
           </div>
         </section>
       )}
