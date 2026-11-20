@@ -20,6 +20,29 @@ const validReq = {
 };
 
 describe("SummarizeRequestSchema", () => {
+  const jpeg = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==";
+
+  it("accepts captionless photo messages only together with an attached image", () => {
+    const photoMsg = { ...validReq.messages[0], id: "p1", text: "" };
+    expect(SummarizeRequestSchema.safeParse({ ...validReq, messages: [photoMsg] }).success).toBe(false);
+    expect(
+      SummarizeRequestSchema.safeParse({ ...validReq, messages: [photoMsg], images: [{ messageId: "p1", dataUrl: jpeg }] }).success,
+    ).toBe(true);
+  });
+
+  it("rejects images for unknown messages, non-image data URLs and too many images", () => {
+    const bad = (images: unknown[]) => SummarizeRequestSchema.safeParse({ ...validReq, images }).success;
+    expect(bad([{ messageId: "nope", dataUrl: jpeg }])).toBe(false);
+    expect(bad([{ messageId: "abc", dataUrl: "data:text/html;base64,PHNjcmlwdD4=" }])).toBe(false);
+    expect(bad([{ messageId: "abc", dataUrl: "https://example.com/a.jpg" }])).toBe(false);
+    expect(bad(Array.from({ length: LIMITS.maxImages + 1 }, () => ({ messageId: "abc", dataUrl: jpeg })))).toBe(false);
+  });
+
+  it("defaults images to an empty list (text-only by default)", () => {
+    const r = SummarizeRequestSchema.safeParse(validReq);
+    expect(r.success && r.data.images).toEqual([]);
+  });
+
   it("accepts a valid request", () => {
     expect(SummarizeRequestSchema.safeParse(validReq).success).toBe(true);
   });
@@ -57,11 +80,12 @@ describe("SummarizeRequestSchema", () => {
 const aiOk = {
   overview: "Поездка в зоопарк перенесена на понедельник.",
   announcements: [],
-  events: [{ title: "Поездка в зоопарк", date: "2026-11-24", time: null, dateText: "понедельник 24.11", location: "Зоопарк", status: "confirmed", sourceIds: ["m2", "m6"] }],
-  tasks: [{ task: "Отправить ребёнка в пижаме", deadline: "2026-11-20", deadlineText: "завтра", assignee: "родители", status: "confirmed", sourceIds: ["m3"] }],
-  payments: [{ purpose: "Подарок воспитательнице", amount: 50, currency: "ILS", amountText: "50 ₪", deadline: null, method: "Bit", status: "proposed", sourceIds: ["m4"] }],
-  changes: [{ what: "Дата поездки в зоопарк", before: "воскресенье 23.11", after: "понедельник 24.11", sourceIds: ["m2", "m6"] }],
+  events: [{ title: "Поездка в зоопарк", details: "Выезд от школы в 8:30, взять шляпу и воду.", date: "2026-11-24", time: null, dateText: "понедельник 24.11", location: "Зоопарк", status: "confirmed", sourceIds: ["m2", "m6"] }],
+  tasks: [{ task: "Отправить ребёнка в пижаме", details: null, deadline: "2026-11-20", deadlineText: "завтра", assignee: "родители", status: "confirmed", sourceIds: ["m3"] }],
+  payments: [{ purpose: "Подарок воспитательнице", details: "Собирает Ваад.", amount: 50, currency: "ILS", amountText: "50 ₪", deadline: null, method: "Bit", status: "proposed", sourceIds: ["m4"] }],
+  changes: [{ what: "Дата поездки в зоопарк", details: "Из-за дождя.", before: "воскресенье 23.11", after: "понедельник 24.11", sourceIds: ["m2", "m6"] }],
   other: [],
+  translations: [{ id: "m2", ru: "Напоминание: поездка в зоопарк в воскресенье 23.11, взять шляпу" }],
 };
 
 describe("AiSummarySchema (AI response validation)", () => {
@@ -82,7 +106,7 @@ describe("AiSummarySchema (AI response validation)", () => {
 
 describe("summaryToPlainText", () => {
   it("renders a Russian plain-text summary with source times and warnings", () => {
-    const src = [{ id: "a", timestamp: "2026-11-20T12:00:00+02:00", sender: "Ganenet" }];
+    const src = [{ id: "a", timestamp: "2026-11-20T12:00:00+02:00", sender: "Ganenet", text: "Zoo trip moved", translation: "Поездку перенесли" }];
     const enriched = {
       overview: aiOk.overview,
       announcements: [],
@@ -94,7 +118,7 @@ describe("summaryToPlainText", () => {
     };
     const text = summaryToPlainText("Группа", "Последние 24 часа", enriched, ["Период покрыт не полностью"]);
     expect(text).toContain("*Даты и события*");
-    expect(text).toContain("24.11.2026 — Поездка в зоопарк — Зоопарк (20.11 12:00)");
+    expect(text).toContain("24.11.2026 — Поездка в зоопарк — Зоопарк (20.11 12:00)\n   Выезд от школы в 8:30, взять шляпу и воду.");
     expect(text).toContain("[предложение, не подтверждено]");
     expect(text).toContain("было: воскресенье 23.11 — стало: понедельник 24.11");
     expect(text).toContain("⚠️");

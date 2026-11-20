@@ -10,5 +10,6 @@ export function createProvider(cfg: AppConfig["ai"]): AiProvider {
     baseURL: cfg.baseURL,
     apiKey: cfg.apiKey,
     model: cfg.model,
+    visionModel: cfg.visionModel,
   });
 }

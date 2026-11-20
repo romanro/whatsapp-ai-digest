@@ -1,11 +1,12 @@
 import OpenAI, { APIConnectionError, APIConnectionTimeoutError, APIError } from "openai";
-import { AiError, type AiProvider, type JsonCompletionRequest, type ModelStatus } from "./provider.ts";
+import { AiError, type AiProvider, type JsonCompletionRequest, type ModelStatus, type VisionRequest } from "./provider.ts";
 
 export interface OpenAiCompatibleOptions {
   name: string;
   baseURL: string;
   apiKey: string | undefined;
   model: string;
+  visionModel?: string | null;
   /** Network retries for 408/409/429/5xx (the SDK applies exponential backoff and honours Retry-After). */
   maxRetries?: number;
   timeoutMs?: number;
@@ -15,12 +16,14 @@ export interface OpenAiCompatibleOptions {
 export class OpenAiCompatibleProvider implements AiProvider {
   readonly name: string;
   readonly model: string;
+  readonly visionModel: string | null;
   private readonly client: OpenAI | null;
-  private modelStatusCache: { at: number; status: ModelStatus } | null = null;
+  private modelListCache: { at: number; ids: Set<string> } | null = null;
 
   constructor(private readonly opts: OpenAiCompatibleOptions) {
     this.name = opts.name;
     this.model = opts.model;
+    this.visionModel = opts.visionModel ?? null;
     this.client = opts.apiKey
       ? new OpenAI({
           apiKey: opts.apiKey,
@@ -35,25 +38,63 @@ export class OpenAiCompatibleProvider implements AiProvider {
     return this.client !== null;
   }
 
+  /** Model ids offered by the provider, cached for 10 minutes to avoid spending rate limit on health checks. */
+  private async listModels(): Promise<Set<string>> {
+    if (!this.client) throw new AiError("not_configured", "API-ключ не настроен.");
+    if (this.modelListCache && Date.now() - this.modelListCache.at < 600_000) return this.modelListCache.ids;
+    const ids = new Set<string>();
+    for await (const m of this.client.models.list()) ids.add(m.id);
+    this.modelListCache = { at: Date.now(), ids };
+    return ids;
+  }
+
   async checkModel(): Promise<ModelStatus> {
     if (!this.client) return { available: false, message: "API-ключ не настроен (GROQ_API_KEY в apps/server/.env)." };
-    // Cache for 10 minutes to avoid spending rate limit on health checks.
-    if (this.modelStatusCache && Date.now() - this.modelStatusCache.at < 600_000) return this.modelStatusCache.status;
-    let status: ModelStatus;
     try {
-      const ids: string[] = [];
-      for await (const m of this.client.models.list()) ids.push(m.id);
-      status = ids.includes(this.model)
+      return (await this.listModels()).has(this.model)
         ? { available: true, message: null }
         : { available: false, message: `Модель «${this.model}» недоступна у провайдера. Укажите другую в GROQ_MODEL.` };
     } catch (err) {
       const mapped = mapError(err);
-      status = { available: mapped.code === "auth_failed" ? false : null, message: mapped.message };
-      // Don't cache transient failures.
-      return status;
+      return { available: mapped.code === "auth_failed" ? false : null, message: mapped.message };
     }
-    this.modelStatusCache = { at: Date.now(), status };
-    return status;
+  }
+
+  async checkVisionModel(): Promise<boolean | null> {
+    if (!this.client || !this.visionModel) return null;
+    try {
+      return (await this.listModels()).has(this.visionModel);
+    } catch {
+      return null;
+    }
+  }
+
+  async completeVisionJson(req: VisionRequest): Promise<string> {
+    if (!this.client) throw new AiError("not_configured", "AI-провайдер не настроен: добавьте API-ключ в apps/server/.env.");
+    if (!this.visionModel) throw new AiError("model_unavailable", "Анализ фото отключён (VISION_MODEL=off).");
+    try {
+      const res = await this.client.chat.completions.create({
+        model: this.visionModel,
+        messages: [
+          { role: "system", content: req.system },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: req.user },
+              { type: "image_url", image_url: { url: req.imageDataUrl } },
+            ],
+          },
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0.1,
+        max_completion_tokens: req.maxTokens,
+      });
+      const content = res.choices[0]?.message.content;
+      if (!content) throw new AiError("invalid_output", "Модель не вернула описание фото.");
+      return content;
+    } catch (err) {
+      throw mapError(err);
+    }
   }
 
   async completeJson(req: JsonCompletionRequest): Promise<string> {
@@ -104,11 +145,10 @@ export function mapError(err: unknown): AiError {
     const status = err.status;
     if (status === 401 || status === 403) return new AiError("auth_failed", "Неверный или отозванный API-ключ AI-провайдера.");
     if (status === 429) {
-      const ra = Number(err.headers?.get?.("retry-after"));
       return new AiError(
         "rate_limited",
         "Превышен лимит запросов AI-провайдера (бесплатный тариф). Подождите минуту и повторите.",
-        Number.isFinite(ra) ? ra : undefined,
+        retryAfterSeconds(err),
       );
     }
     if (status === 404) return new AiError("model_unavailable", "Модель не найдена у провайдера. Проверьте GROQ_MODEL.");
@@ -117,6 +157,16 @@ export function mapError(err: unknown): AiError {
     return new AiError("provider_error", `Ошибка AI-провайдера${status ? ` (${status})` : ""}. Попробуйте позже.`);
   }
   return new AiError("provider_error", "Не удалось связаться с AI-провайдером. Проверьте интернет-соединение.");
+}
+
+/** Seconds to wait from the Retry-After header or Groq's "Please try again in 1m2.5s" message. */
+export function retryAfterSeconds(err: { headers?: { get?: (k: string) => string | null } | undefined; message?: string }): number | undefined {
+  const header = Number(err.headers?.get?.("retry-after"));
+  if (Number.isFinite(header) && header > 0) return header;
+  const m = /try again in (?:(\d+)m)?([\d.]+)(ms|s)/i.exec(err.message ?? "");
+  if (!m) return undefined;
+  const value = Number(m[2]) / (m[3] === "ms" ? 1000 : 1) + Number(m[1] ?? 0) * 60;
+  return Number.isFinite(value) ? value : undefined;
 }
 
 /** Finds a Node/undici error code (e.g. SELF_SIGNED_CERT_IN_CHAIN, ENOTFOUND) in the cause chain. */

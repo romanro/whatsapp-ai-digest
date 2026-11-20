@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatWallTime, inferDateOrder, labelToDate, parseLabel, toLocalIso } from "../src/timestamps.ts";
+import { formatWallTime, inferDateOrder, labelToDate, parseLabel, promptTime, toLocalIso, weekdayRu } from "../src/timestamps.ts";
 
 describe("parseLabel", () => {
   it("parses 24h DMY labels with Russian sender", () => {
@@ -59,5 +59,14 @@ describe("labelToDate / toLocalIso", () => {
     expect(iso).toMatch(/^2026-11-20T07:05:00[+-]\d{2}:\d{2}$/);
     expect(Date.parse(iso)).toBe(new Date(2026, 10, 20, 7, 5).getTime());
     expect(formatWallTime(iso)).toBe("20.11 07:05");
+  });
+});
+
+describe("weekdays", () => {
+  it("uses the wall date of the local ISO string", () => {
+    expect(weekdayRu("2026-11-20T23:59:00-08:00")).toBe("пт");
+    expect(weekdayRu("2026-11-23T08:30:00+02:00")).toBe("пн");
+    expect(promptTime("2026-11-20T14:04:00+02:00")).toBe("2026-11-20 (пт) 14:04");
+    expect(weekdayRu("garbage")).toBeNull();
   });
 });

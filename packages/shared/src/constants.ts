@@ -23,4 +23,12 @@ export const LIMITS = {
   maxSenderChars: 120,
   maxGroupNameChars: 200,
   maxTotalChars: 400_000,
+  /** Hard cap of photos per request (the user-facing default is lower, see DEFAULT_MAX_IMAGES). */
+  maxImages: 20,
+  /** One compressed JPEG as a data URL (~500 KB of image). */
+  maxImageDataUrlChars: 700_000,
 } as const;
+
+export const DEFAULT_MAX_IMAGES = 10;
+/** Longest side of a photo sent for analysis; enough to read a textbook page, small enough for rate limits. */
+export const IMAGE_MAX_SIDE = 1280;

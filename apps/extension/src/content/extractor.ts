@@ -25,7 +25,16 @@ export interface ExtractionResult {
   stats: {
     rowsSeen: number;
     untimed: number;
-    skippedNonText: number;
+    /** Rows without a sender/time label (system notices, some media types). */
+    noLabel: number;
+    /** Messages with loaded photo(s) but no caption (kept with imageRefs, text ""). */
+    photoOnly: number;
+    /** Messages with neither text nor a loaded photo: video, voice, documents, stickers, not-yet-loaded photos. */
+    otherMedia: number;
+    /** Photos WhatsApp has rendered (blob) and that can be analysed on request. */
+    imagesLoaded: number;
+    /** Photos shown only as a blurred placeholder (not downloaded by WhatsApp). */
+    imagesNotLoaded: number;
     truncated: number;
     duplicatesRemoved: number;
     dateOrder: DateOrder;
@@ -121,21 +130,51 @@ function isVisible(el: Element): boolean {
  * scrolls, types or modifies the page. Older history that WhatsApp has not rendered is not accessed.
  */
 export function extractRenderedMessages(doc: Document, dateOrderFallback: DateOrder): ExtractionResult | ExtractionError {
+  return extractWithImages(doc, dateOrderFallback).result;
+}
+
+/** Loaded photos of a row (blob: URLs only — never triggers a download). */
+function rowImages(row: Element): { loaded: HTMLImageElement[]; notLoaded: number } {
+  const loaded: HTMLImageElement[] = [];
+  let notLoaded = 0;
+  for (const thumb of queryAll(row, SELECTORS.imageThumb)) {
+    if (isInsideQuote(thumb, row)) continue;
+    const img = Array.from(thumb.querySelectorAll("img")).find((i) => (i.getAttribute("src") ?? "").startsWith("blob:"));
+    if (img) loaded.push(img);
+    else notLoaded++;
+  }
+  return { loaded: loaded.slice(0, 4), notLoaded };
+}
+
+/**
+ * Same as extractRenderedMessages, plus a map from image ref → <img> element so the content script can
+ * later read the photos the user selects. The map never leaves the content script.
+ */
+export function extractWithImages(
+  doc: Document,
+  dateOrderFallback: DateOrder,
+): { result: ExtractionResult | ExtractionError; images: Map<string, HTMLImageElement> } {
+  const images = new Map<string, HTMLImageElement>();
+  const fail = (result: ExtractionError) => ({ result, images });
   const p = probe(doc);
-  if (!p.whatsappLoaded) return { ok: false, code: "not_loaded", message: "WhatsApp Web не загружен или вы не вошли в аккаунт." };
+  if (!p.whatsappLoaded) return fail({ ok: false, code: "not_loaded", message: "WhatsApp Web не загружен или вы не вошли в аккаунт." });
   const main = queryFirst(doc, SELECTORS.mainPane);
-  if (!p.chatOpen || !main) return { ok: false, code: "no_chat", message: "Откройте группу в WhatsApp Web." };
+  if (!p.chatOpen || !main) return fail({ ok: false, code: "no_chat", message: "Откройте группу в WhatsApp Web." });
   if (p.isGroup === null) {
-    return { ok: false, code: "unknown_chat_type", message: "Не удалось определить тип чата: в окне нет сообщений." };
+    return fail({ ok: false, code: "unknown_chat_type", message: "Не удалось определить тип чата: в окне нет сообщений." });
   }
   if (!p.isGroup) {
-    return { ok: false, code: "not_group", message: NOT_GROUP_MESSAGE };
+    return fail({ ok: false, code: "not_group", message: NOT_GROUP_MESSAGE });
   }
 
   const rows = queryAll(main, SELECTORS.messageRow);
-  type Pending = { key: string; label: ParsedLabel | null; text: string };
+  type Pending = { key: string; label: ParsedLabel | null; text: string; imageRefs: string[] };
   const pending: Pending[] = [];
-  let skippedNonText = 0;
+  let noLabel = 0;
+  let photoOnly = 0;
+  let otherMedia = 0;
+  let imagesLoaded = 0;
+  let imagesNotLoaded = 0;
   let truncated = 0;
 
   for (const row of rows) {
@@ -146,18 +185,28 @@ export function extractRenderedMessages(doc: Document, dateOrderFallback: DateOr
 
     const labelEl = queryAll(row, SELECTORS.prePlainText).find((el) => !isInsideQuote(el, row));
     if (!labelEl) {
-      // System notices, media without caption, stickers, deleted messages, etc.
-      skippedNonText++;
+      // System notices, some media types, deleted messages, etc.
+      noLabel++;
       continue;
     }
     const textEl = queryAll(labelEl, SELECTORS.messageText).find((el) => !isInsideQuote(el, row));
     const text = textEl ? extractText(textEl) : "";
-    if (!text) {
-      skippedNonText++;
+    const key = opaqueKey(dataId);
+    const imgs = rowImages(row);
+    imagesNotLoaded += imgs.notLoaded;
+    const imageRefs = imgs.loaded.map((img, i) => {
+      const ref = `${key}:${i}`;
+      images.set(ref, img);
+      return ref;
+    });
+    imagesLoaded += imageRefs.length;
+    if (!text && !imageRefs.length) {
+      otherMedia++;
       continue;
     }
-    if (hasReadMore(row)) truncated++;
-    pending.push({ key: opaqueKey(dataId), label: parseLabel(labelEl.getAttribute("data-pre-plain-text") ?? ""), text });
+    if (!text) photoOnly++;
+    if (text && hasReadMore(row)) truncated++;
+    pending.push({ key, label: parseLabel(labelEl.getAttribute("data-pre-plain-text") ?? ""), text, imageRefs });
   }
 
   const labels = pending.flatMap((x) => (x.label ? [x.label] : []));
@@ -173,23 +222,28 @@ export function extractRenderedMessages(doc: Document, dateOrderFallback: DateOr
       sender: normalizeSender(x.label?.sender),
       timestamp: date ? toLocalIso(date) : null,
       text: x.text,
+      ...(x.imageRefs.length ? { imageRefs: x.imageRefs } : {}),
     };
   });
 
   const deduped = dedupeMessages(messages);
   if (!deduped.length) {
-    return { ok: false, code: "no_messages", message: "В открытом чате не найдено текстовых сообщений." };
+    return fail({ ok: false, code: "no_messages", message: "В открытом чате не найдено ни текстовых сообщений, ни фото." });
   }
 
   const scrollBtn = queryFirst(main, SELECTORS.scrollToBottom);
-  return {
+  const result: ExtractionResult = {
     ok: true,
     groupName: p.groupName ?? "Без названия",
     messages: deduped,
     stats: {
       rowsSeen: rows.length,
       untimed,
-      skippedNonText,
+      noLabel,
+      photoOnly,
+      otherMedia,
+      imagesLoaded,
+      imagesNotLoaded,
       truncated,
       duplicatesRemoved: messages.length - deduped.length,
       dateOrder,
@@ -197,6 +251,7 @@ export function extractRenderedMessages(doc: Document, dateOrderFallback: DateOr
       notScrolledToBottom: !!scrollBtn && isVisible(scrollBtn),
     },
   };
+  return { result, images };
 }
 
 /** Waits until the number of rendered rows stops changing (WhatsApp renders lazily), max ~2 s. Read-only. */

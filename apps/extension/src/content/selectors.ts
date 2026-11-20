@@ -36,6 +36,8 @@ export const SELECTORS = {
   prePlainText: ["[data-pre-plain-text]"],
   /** Message body text inside the pre-plain-text element. */
   messageText: ["span.selectable-text", '[data-testid="selectable-text"]', "span[dir='auto']"],
+  /** Photo inside a message bubble (seen live 2026-11-20: role="button" wrapper with this testid). */
+  imageThumb: ['[data-testid="image-thumb"]'],
   /** Quoted (replied-to) message block — its text must not be attributed to the reply. */
   quotedMessage: ['[data-testid="quoted-message"]', '[aria-label="Quoted message"]', '[aria-label*="uoted"]'],
   /** "Read more" button on truncated long messages. */

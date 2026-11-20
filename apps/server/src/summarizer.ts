@@ -1,22 +1,34 @@
 import {
   AiSummarySchema,
+  ImageReadingSchema,
   SECTION_KEYS,
   SenderPseudonymizer,
+  detectScripts,
+  promptTime,
   redactText,
   type AiSummary,
   type EnrichedSummary,
+  type InputImage,
   type InputMessage,
   type SourceRef,
   type SummarizeRequest,
   type SummarizeResponse,
 } from "@wad/shared";
 import { AiError, type AiProvider } from "./ai/provider.ts";
-import { buildChunkPrompt, buildMergePrompt, type PromptMessage } from "./ai/prompt.ts";
+import { VISION_SYSTEM, buildChunkPrompt, buildMergePrompt, buildVisionUser, type PromptMessage } from "./ai/prompt.ts";
 
 export interface SummarizerOptions {
   batchMaxChars: number;
   maxOutputTokens?: number;
+  /** Called with an error code (never content) when a photo can't be read — for server logs. */
+  onImageError?: (code: string) => void;
+  /** Injected for tests. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Total time budget for waiting on photo rate limits. */
+  visionWaitBudgetMs?: number;
 }
+
+const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /** Splits messages into chronological batches whose serialized size stays under the budget. */
 export function chunkMessages(messages: PromptMessage[], maxChars: number): PromptMessage[][] {
@@ -37,21 +49,130 @@ export function chunkMessages(messages: PromptMessage[], maxChars: number): Prom
   return batches;
 }
 
+/* ---------------- Photos → text ---------------- */
+
+export interface ImageAnalysis {
+  /** messageId → readings formatted as "[Фото: …]" blocks. */
+  readings: Map<string, string[]>;
+  analyzed: number;
+  failed: number;
+}
+
+export function parseImageReading(text: string): { text: string; description: string } | null {
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    const m = /\{[\s\S]*\}/.exec(text);
+    if (!m) return null;
+    try {
+      json = JSON.parse(m[0]);
+    } catch {
+      return null;
+    }
+  }
+  const r = ImageReadingSchema.safeParse(json);
+  return r.success ? r.data : null;
+}
+
+export function formatReading(r: { text: string; description: string }): string {
+  const parts = [r.description.trim(), r.text.trim() ? `Текст на фото:\n${r.text.trim()}` : ""].filter(Boolean);
+  return `[Фото: ${parts.join("\n") || "без распознанного содержимого"}]`;
+}
+
+/**
+ * Reads each user-selected photo with the vision model, one at a time. Groq's free tier allows only a few photos per
+ * minute (~1 800 input tokens each vs 7 000/min), so on a rate limit we wait as long as the provider asks and retry,
+ * within a total time budget. A failed photo never fails the whole summary; it's counted and reported.
+ */
+export async function analyzeImages(
+  images: InputImage[],
+  messages: Map<string, InputMessage>,
+  provider: AiProvider,
+  opts: Pick<SummarizerOptions, "onImageError" | "sleep" | "visionWaitBudgetMs"> = {},
+): Promise<ImageAnalysis> {
+  const sleep = opts.sleep ?? realSleep;
+  let waitBudget = opts.visionWaitBudgetMs ?? 5 * 60_000;
+  const readings = new Map<string, string[]>();
+  let analyzed = 0;
+  let failed = 0;
+  if (!images.length) return { readings, analyzed, failed };
+  if (!provider.visionModel) {
+    opts.onImageError?.("vision_disabled");
+    return { readings, analyzed, failed: images.length };
+  }
+  for (const [index, img] of images.entries()) {
+    const msg = messages.get(img.messageId);
+    const request = {
+      system: VISION_SYSTEM,
+      user: buildVisionUser({ caption: msg?.text ?? "", sender: msg?.sender ?? null, time: msg ? promptTime(msg.timestamp) : "" }),
+      imageDataUrl: img.dataUrl,
+      maxTokens: 2000,
+    };
+    let reading: { text: string; description: string } | null = null;
+    let fatal = false;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        reading = parseImageReading(await provider.completeVisionJson(request));
+        if (!reading) opts.onImageError?.("invalid_output");
+        break;
+      } catch (err) {
+        const code = err instanceof AiError ? err.code : "unknown";
+        if (code === "rate_limited" && attempt < 3) {
+          const waitMs = Math.min(65_000, Math.max(2_000, ((err as AiError).retryAfterSeconds ?? 20) * 1000 + 500));
+          if (waitMs <= waitBudget) {
+            waitBudget -= waitMs;
+            await sleep(waitMs);
+            continue;
+          }
+        }
+        opts.onImageError?.(code);
+        fatal = code === "rate_limited" || code === "auth_failed" || code === "not_configured";
+        break;
+      }
+    }
+    if (reading) {
+      const list = readings.get(img.messageId) ?? [];
+      list.push(formatReading(reading));
+      readings.set(img.messageId, list);
+      analyzed++;
+    } else {
+      failed++;
+    }
+    // Rate limit budget exhausted or auth problems would hit every remaining photo too.
+    if (fatal) {
+      failed += images.length - index - 1;
+      break;
+    }
+  }
+  return { readings, analyzed, failed };
+}
+
+/** Appends photo readings to their messages; drops captionless photo messages whose photo couldn't be read. */
+export function mergeReadings(messages: InputMessage[], readings: Map<string, string[]>): InputMessage[] {
+  return messages
+    .map((m) => {
+      const r = readings.get(m.id);
+      return r ? { ...m, text: [m.text.trim(), ...r].filter(Boolean).join("\n") } : m;
+    })
+    .filter((m) => m.text.trim() !== "");
+}
+
 /* ---------------- AI output parsing & validation ---------------- */
 
 const NULLABLE_DEFAULTS: Record<string, string[]> = {
   announcements: ["details"],
   other: ["details"],
-  events: ["date", "time", "dateText", "location"],
-  tasks: ["deadline", "deadlineText", "assignee"],
-  payments: ["amount", "currency", "amountText", "deadline", "method"],
-  changes: ["before"],
+  events: ["details", "date", "time", "dateText", "location"],
+  tasks: ["details", "deadline", "deadlineText", "assignee"],
+  payments: ["details", "amount", "currency", "amountText", "deadline", "method"],
+  changes: ["details", "before"],
 };
 
 /**
  * Light, non-inventive coercion of common model slips before strict validation:
  * missing optional fields → null, missing arrays → [], single id string → [id], missing status → "unclear",
- * malformed dates/times → null (the original wording stays in *Text fields).
+ * malformed dates/times → null (the original wording stays in *Text fields), malformed translations dropped.
  */
 export function coerceAiOutput(raw: unknown): unknown {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
@@ -83,6 +204,16 @@ export function coerceAiOutput(raw: unknown): unknown {
       return it;
     });
   }
+  obj.translations = Array.isArray(obj.translations)
+    ? obj.translations.filter(
+        (t: unknown): t is { id: string; ru: string } =>
+          typeof t === "object" &&
+          t !== null &&
+          typeof (t as { id?: unknown }).id === "string" &&
+          typeof (t as { ru?: unknown }).ru === "string" &&
+          (t as { ru: string }).ru.trim() !== "",
+      )
+    : [];
   return obj;
 }
 
@@ -132,7 +263,7 @@ async function completeValidated(provider: AiProvider, prompt: { system: string;
 
 /** Deterministic fallback merge (used if the AI merge step fails): concatenation with exact-duplicate removal. */
 export function concatSummaries(parts: AiSummary[]): AiSummary {
-  const out: AiSummary = { overview: "", announcements: [], events: [], tasks: [], payments: [], changes: [], other: [] };
+  const out: AiSummary = { overview: "", announcements: [], events: [], tasks: [], payments: [], changes: [], other: [], translations: [] };
   out.overview = parts
     .map((p) => p.overview.trim())
     .filter(Boolean)
@@ -149,29 +280,45 @@ export function concatSummaries(parts: AiSummary[]): AiSummary {
       }
     }
   }
+  out.translations = parts.flatMap((p) => p.translations);
   return out;
 }
 
-/* ---------------- Enrichment: attach REAL timestamps from input ---------------- */
+/* ---------------- Enrichment: attach REAL timestamps & original text from input ---------------- */
+
+/** True if a YYYY-MM-DD date is earlier than the (first|last) source message's wall date. */
+function isBefore(date: string | null, sources: SourceRef[], which: "first" | "last"): boolean {
+  if (!date || !sources.length) return false;
+  const ref = (which === "first" ? sources[0] : sources[sources.length - 1]) as SourceRef;
+  return date < ref.timestamp.slice(0, 10);
+}
+
+/** A translation is shown only for messages that aren't plain Russian. */
+function needsTranslation(text: string): boolean {
+  const s = detectScripts(text);
+  return s.hebrew || !s.cyrillic;
+}
 
 export function enrichSummary(
   summary: AiSummary,
   sourceMap: Map<string, SourceRef>,
+  translations: Map<string, string> = new Map(summary.translations.map((t) => [t.id.trim(), t.ru])),
 ): { summary: EnrichedSummary; unknownDropped: number } {
   let unknownDropped = 0;
   const resolve = (ids: string[]): SourceRef[] => {
     const refs: SourceRef[] = [];
     const seen = new Set<string>();
-    for (const id of ids) {
-      const ref = sourceMap.get(id.trim());
+    for (const raw of ids) {
+      const id = raw.trim();
+      const ref = sourceMap.get(id);
       if (!ref) {
         unknownDropped++;
         continue;
       }
-      if (!seen.has(ref.id)) {
-        seen.add(ref.id);
-        refs.push(ref);
-      }
+      if (seen.has(ref.id)) continue;
+      seen.add(ref.id);
+      const tr = translations.get(id);
+      refs.push({ ...ref, translation: tr && needsTranslation(ref.text) ? tr : null });
     }
     return refs.sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
   };
@@ -179,15 +326,28 @@ export function enrichSummary(
   const map = <T extends { sourceIds: string[] }>(items: T[]) =>
     items.map((i) => ({ ...i, sources: resolve(i.sourceIds) })).filter((i) => i.sources.length > 0);
 
+  // Models sometimes repeat a dated/actionable item as an announcement too — keep only the specific one.
+  const norm = (t: string) => t.toLocaleLowerCase("ru").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  const specific = new Set(
+    [
+      ...summary.events.map((e) => e.title),
+      ...summary.tasks.map((t) => t.task),
+      ...summary.payments.map((p) => p.purpose),
+      ...summary.changes.map((c) => c.what),
+    ].map(norm),
+  );
+  const notDuplicate = <T extends { title: string }>(items: T[]) => items.filter((i) => !specific.has(norm(i.title)));
+
   return {
     summary: {
       overview: summary.overview,
-      announcements: map(summary.announcements),
-      events: map(summary.events),
-      tasks: map(summary.tasks),
-      payments: map(summary.payments),
+      announcements: map(notDuplicate(summary.announcements)),
+      // A resolved date before the announcing message is a mis-resolved relative date — drop it, keep the wording.
+      events: map(summary.events).map((e) => (isBefore(e.date, e.sources, "first") ? { ...e, date: null, dateText: e.dateText } : e)),
+      tasks: map(summary.tasks).map((t) => (isBefore(t.deadline, t.sources, "last") ? { ...t, deadline: null } : t)),
+      payments: map(summary.payments).map((p) => (isBefore(p.deadline, p.sources, "last") ? { ...p, deadline: null } : p)),
       changes: map(summary.changes),
-      other: map(summary.other),
+      other: map(notDuplicate(summary.other)),
     },
     unknownDropped,
   };
@@ -205,13 +365,9 @@ export function prepareMessages(messages: InputMessage[]): { prompt: PromptMessa
     .map((m, i) => {
       const shortId = `m${i + 1}`;
       const sender = pseudo.pseudonymize(m.sender);
-      sourceMap.set(shortId, { id: m.id, timestamp: m.timestamp, sender });
-      return {
-        id: shortId,
-        t: m.timestamp.slice(0, 16).replace("T", " "),
-        from: sender,
-        text: redactText(m.text).text,
-      };
+      const text = redactText(m.text).text;
+      sourceMap.set(shortId, { id: m.id, timestamp: m.timestamp, sender, text, translation: null });
+      return { id: shortId, t: promptTime(m.timestamp), from: sender, text };
     });
   return { prompt, sourceMap };
 }
@@ -221,8 +377,16 @@ export async function summarize(
   provider: AiProvider,
   opts: SummarizerOptions,
 ): Promise<SummarizeResponse> {
-  const maxTokens = opts.maxOutputTokens ?? 4096;
-  const { prompt, sourceMap } = prepareMessages(req.messages);
+  // Details + full translations need more room than a terse summary.
+  const maxTokens = opts.maxOutputTokens ?? 8192;
+
+  const vision = await analyzeImages(req.images, new Map(req.messages.map((m) => [m.id, m])), provider, opts);
+  const messages = mergeReadings(req.messages, vision.readings);
+  if (!messages.length) {
+    throw new AiError("invalid_output", "Не удалось распознать ни одного фото, а текстовых сообщений нет.");
+  }
+
+  const { prompt, sourceMap } = prepareMessages(messages);
   const batches = chunkMessages(prompt, opts.batchMaxChars);
 
   const partials: AiSummary[] = [];
@@ -236,6 +400,10 @@ export async function summarize(
     partials.push(await completeValidated(provider, p, maxTokens));
   }
 
+  // Translations are collected from every partial; the merge step doesn't need to repeat them.
+  const translations = new Map<string, string>();
+  for (const p of partials) for (const t of p.translations) translations.set(t.id.trim(), t.ru);
+
   let merged: AiSummary;
   if (partials.length === 1) {
     merged = partials[0] as AiSummary;
@@ -243,7 +411,11 @@ export async function summarize(
     try {
       merged = await completeValidated(
         provider,
-        buildMergePrompt({ groupName: req.groupName, clientNow: req.clientNow, partials }),
+        buildMergePrompt({
+          groupName: req.groupName,
+          clientNow: req.clientNow,
+          partials: partials.map(({ translations: _t, ...rest }) => rest),
+        }),
         maxTokens,
       );
     } catch (err) {
@@ -252,18 +424,25 @@ export async function summarize(
     }
   }
 
-  const { summary, unknownDropped } = enrichSummary(merged, sourceMap);
+  const { summary, unknownDropped } = enrichSummary(merged, sourceMap, translations);
+  const coverage = { ...req.coverage, warnings: [...req.coverage.warnings] };
+  if (vision.failed > 0) {
+    coverage.warnings.push(`${vision.failed} фото не удалось распознать — их содержимое не попало в сводку.`);
+  }
   return {
     summary,
     meta: {
       provider: provider.name,
       model: provider.model,
-      messagesAnalyzed: req.messages.length,
+      messagesAnalyzed: messages.length,
       batches: batches.length,
       unknownSourceIdsDropped: unknownDropped,
+      imagesAnalyzed: vision.analyzed,
+      imagesFailed: vision.failed,
+      visionModel: req.images.length ? provider.visionModel : null,
       generatedAt: new Date().toISOString(),
     },
-    coverage: req.coverage,
+    coverage,
     groupName: req.groupName,
     period: req.period,
   };

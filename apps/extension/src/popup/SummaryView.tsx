@@ -21,14 +21,33 @@ const SECTION_ICONS: Record<SectionKey, string> = {
   other: "📌",
 };
 
+/** Each source can be expanded to show the full Russian translation and the original message. */
 function Sources({ sources }: { sources: SourceRef[] }) {
   return (
-    <div className="sources" title="Время исходных сообщений в WhatsApp">
+    <div className="sources">
       {sources.map((s) => (
-        <span key={s.id} className="source">
-          {formatWallTime(s.timestamp)}
-          {s.sender ? ` · ${s.sender}` : ""}
-        </span>
+        <details key={s.id} className="source">
+          <summary title="Показать исходное сообщение">
+            <span className="source-time">
+              {formatWallTime(s.timestamp)}
+              {s.sender ? ` · ${s.sender}` : ""}
+            </span>
+          </summary>
+          <div className="source-body">
+            {s.translation && (
+              <div className="source-translation">
+                <span className="source-label">Перевод</span>
+                <p>{s.translation}</p>
+              </div>
+            )}
+            {s.text && (
+              <div className="source-original">
+                <span className="source-label">{s.translation ? "Оригинал" : "Сообщение"}</span>
+                <p dir="auto">{s.text}</p>
+              </div>
+            )}
+          </div>
+        </details>
       ))}
     </div>
   );
@@ -80,6 +99,7 @@ function renderSection(key: SectionKey, s: EnrichedSummary): ReactNode[] {
         <Item
           key={i}
           title={e.title}
+          details={e.details}
           chips={[dateTime(e.date, e.time, e.dateText), e.location && `📍 ${e.location}`]}
           status={e.status}
           sources={e.sources}
@@ -90,6 +110,7 @@ function renderSection(key: SectionKey, s: EnrichedSummary): ReactNode[] {
         <Item
           key={i}
           title={t.task}
+          details={t.details}
           chips={[t.deadline ? `до ${formatIsoDateRu(t.deadline)}` : t.deadlineText, t.assignee && `👤 ${t.assignee}`]}
           status={t.status}
           sources={t.sources}
@@ -100,6 +121,7 @@ function renderSection(key: SectionKey, s: EnrichedSummary): ReactNode[] {
         <Item
           key={i}
           title={p.purpose}
+          details={p.details}
           chips={[
             p.amountText ?? (p.amount !== null ? `${p.amount} ${p.currency ?? ""}` : null),
             p.deadline ? `до ${formatIsoDateRu(p.deadline)}` : null,
@@ -111,7 +133,13 @@ function renderSection(key: SectionKey, s: EnrichedSummary): ReactNode[] {
       ));
     case "changes":
       return s.changes.map((c, i) => (
-        <Item key={i} title={c.what} details={c.before ? `Было: ${c.before} → Стало: ${c.after}` : `Теперь: ${c.after}`} sources={c.sources} />
+        <Item
+          key={i}
+          title={c.what}
+          chips={[c.before ? `Было: ${c.before}` : null, `Стало: ${c.after}`]}
+          details={c.details}
+          sources={c.sources}
+        />
       ));
   }
 }

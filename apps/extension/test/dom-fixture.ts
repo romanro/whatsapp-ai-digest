@@ -10,6 +10,8 @@ export interface FixtureMsg {
   outgoing?: boolean;
   quote?: { label: string; text: string };
   readMore?: boolean;
+  /** A photo in the bubble: loaded (blob:) or still a blurred placeholder (data:). */
+  photo?: "loaded" | "notLoaded";
 }
 
 const LEGACY_GROUP = "120363000000000001@g.us";
@@ -21,10 +23,16 @@ export function row(m: FixtureMsg, opts: { legacyJid?: string } = {}): string {
   const quote = m.quote
     ? `<div aria-label="Quoted message"><div class="copyable-text" data-pre-plain-text="${m.quote.label}"><span class="selectable-text">${m.quote.text}</span></div></div>`
     : "";
+  const photo = m.photo
+    ? `<div data-testid="image-thumb" role="button"><img src="${
+        m.photo === "loaded" ? `blob:https://web.whatsapp.com/${m.id}` : "data:image/jpeg;base64,/9j/AA=="
+      }" /></div>`
+    : "";
+  const textSpan = m.html ?? m.text ? `<span dir="auto" class="selectable-text copyable-text">${m.html ?? m.text}</span>` : "";
   const body =
     m.label === undefined
-      ? `<div data-testid="image-thumb" role="button"><img src="blob:x" /></div>`
-      : `<div class="copyable-text" data-pre-plain-text="${m.label}">${quote}<span dir="auto" class="selectable-text copyable-text">${m.html ?? m.text ?? ""}</span>${
+      ? `<div class="system-notice">—</div>`
+      : `<div class="copyable-text" data-pre-plain-text="${m.label}">${quote}${photo}${textSpan}${
           m.readMore ? '<div role="button">Read more</div>' : ""
         }</div>`;
   return `<div role="row"><div data-testid="conv-msg-${hexId}" data-id="${dataId}"><div class="focusable-list-item"><div data-testid="msg-container">${body}</div></div></div></div>`;

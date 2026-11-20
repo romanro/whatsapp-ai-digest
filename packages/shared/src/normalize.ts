@@ -35,7 +35,10 @@ export interface RawMessage {
   sender: string | null;
   /** Local ISO timestamp, or null when it could not be determined (never guessed). */
   timestamp: string | null;
+  /** Caption / message text; may be empty for photo messages. */
   text: string;
+  /** Opaque references to photos rendered in this message (resolved by the content script on request). */
+  imageRefs?: string[];
 }
 
 /**
@@ -49,10 +52,12 @@ export function dedupeMessages<T extends RawMessage>(messages: readonly T[]): T[
   const out: T[] = [];
   for (const m of messages) {
     const contentKey = `${m.sender ?? ""}\u0000${m.timestamp ?? ""}\u0000${normalizeText(m.text)}`;
+    // Content-based dedupe only for messages with text: two captionless photos in the same minute are distinct.
+    const contentComparable = m.timestamp !== null && m.text.trim() !== "";
     if (seenKeys.has(m.key)) continue;
-    if (m.timestamp !== null && seenContent.has(contentKey)) continue;
+    if (contentComparable && seenContent.has(contentKey)) continue;
     seenKeys.add(m.key);
-    if (m.timestamp !== null) seenContent.add(contentKey);
+    if (contentComparable) seenContent.add(contentKey);
     out.push(m);
   }
   return out;

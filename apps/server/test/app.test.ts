@@ -33,7 +33,10 @@ describe("GET /health", () => {
     app = buildApp(config, new FakeProvider([]));
     const res = await app.inject({ method: "GET", url: "/health", headers: { host: "127.0.0.1:3741" } });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ status: "ok", ai: { configured: true, modelAvailable: true, model: "fake-model" } });
+    expect(res.json()).toMatchObject({
+      status: "ok",
+      ai: { configured: true, modelAvailable: true, model: "fake-model", vision: { model: "fake-vision", available: true } },
+    });
     expect(res.body).not.toContain("gsk_test_secret_value");
   });
 
@@ -77,7 +80,7 @@ describe("POST /api/summarize", () => {
 
   it("rejects oversized bodies", async () => {
     app = buildApp(config, new FakeProvider([]));
-    const res = await post({ ...makeRequest(), groupName: "x".repeat(1_100_000) });
+    const res = await post({ ...makeRequest(), groupName: "x".repeat(17_000_000) });
     expect(res.statusCode).toBe(413);
   });
 
@@ -91,8 +94,17 @@ describe("POST /api/summarize", () => {
     const res = await post(makeRequest());
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body.summary.changes[0].sources[0]).toEqual({ id: "a4", timestamp: "2026-11-20T12:00:00+02:00", sender: "Ganenet" });
+    expect(body.summary.changes[0].sources[0]).toMatchObject({ id: "a4", timestamp: "2026-11-20T12:00:00+02:00", sender: "Ganenet" });
     expect(body.groupName).toBe("Родители · גן שושנה");
+  });
+
+  it("accepts a request with photos within the body limit", async () => {
+    const photo = "data:image/jpeg;base64," + "A".repeat(400_000);
+    app = buildApp(config, new FakeProvider([emptySummary()], true, [JSON.stringify({ text: "", description: "Фото" })]));
+    const req = makeRequest();
+    const res = await post({ ...req, images: [{ messageId: "a1", dataUrl: photo }] });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().meta.imagesAnalyzed).toBe(1);
   });
 
   it("maps provider rate limits to 429 with Retry-After", async () => {

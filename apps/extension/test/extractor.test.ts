@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { extractRenderedMessages, probe } from "../src/content/extractor.ts";
+import { extractRenderedMessages, extractWithImages, probe } from "../src/content/extractor.ts";
 import { LEGACY_GROUP, buildDoc, row } from "./dom-fixture.ts";
 
 beforeEach(() => {
@@ -10,7 +10,7 @@ const standard = [
   row({ id: "A1", label: "[09:15, 19/11/2026] Мама Ани: ", text: "Доброе утро!" }),
   row({ id: "A2", label: "[20:30, 19/11/2026] \u200Fאמא של נועה: ", html: "מחר יום פיג'מה <img alt=\"🧸\" src=\"x\"> בגן" }),
   row({ id: "A3", label: "[08:05, 20/11/2026] Ваад: ", html: "Сдаём по 50 ₪<br>до пятницы" }),
-  row({ id: "A4" }), // media without caption
+  row({ id: "A4" }), // system notice / unlabeled row
   row({
     id: "A5",
     label: "[12:00, 20/11/2026] Ganenet: ",
@@ -83,7 +83,30 @@ describe("extractRenderedMessages", () => {
       ["Ganenet", "Moved to Monday"],
     ]);
     expect(Date.parse(r.messages[2]!.timestamp!)).toBe(new Date(2026, 10, 20, 8, 5).getTime());
-    expect(r.stats).toMatchObject({ skippedNonText: 1, untimed: 0, dateOrder: "DMY", dateOrderAssumed: false, notScrolledToBottom: false });
+    expect(r.stats).toMatchObject({ noLabel: 1, photoOnly: 0, otherMedia: 0, untimed: 0, dateOrder: "DMY", dateOrderAssumed: false, notScrolledToBottom: false });
+  });
+
+  it("finds loaded photos (captionless and captioned) without touching placeholders", () => {
+    buildDoc(document, {
+      rows: [
+        row({ id: "F1", label: "[10:00, 20/11/2026] Ganenet: ", photo: "loaded" }),
+        row({ id: "F2", label: "[10:01, 20/11/2026] Ganenet: ", photo: "loaded", text: "ДЗ на завтра" }),
+        row({ id: "F3", label: "[10:02, 20/11/2026] Ganenet: ", photo: "notLoaded" }),
+        row({ id: "F4", label: "[10:03, 20/11/2026] Ganenet: ", text: "Спасибо" }),
+      ],
+    });
+    const { result: r, images } = extractWithImages(document, "DMY");
+    if (!r.ok) throw new Error(r.message);
+    expect(r.messages.map((m) => [m.text, m.imageRefs?.length ?? 0])).toEqual([
+      ["", 1],
+      ["ДЗ на завтра", 1],
+      ["Спасибо", 0],
+    ]);
+    expect(r.stats).toMatchObject({ photoOnly: 1, otherMedia: 1, imagesLoaded: 2, imagesNotLoaded: 1 });
+    const ref = r.messages[0]!.imageRefs![0]!;
+    expect(images.get(ref)?.getAttribute("src")).toBe("blob:https://web.whatsapp.com/F1");
+    // The refs never expose WhatsApp ids or blob URLs.
+    expect(ref).not.toMatch(/blob:|3EB0/);
   });
 
   it("excludes quoted text from the reply", () => {

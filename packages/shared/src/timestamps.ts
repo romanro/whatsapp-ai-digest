@@ -93,3 +93,18 @@ export function formatWallTime(iso: string, withYear = false): string {
   if (!m) return iso;
   return `${m[3]}.${m[2]}${withYear ? `.${m[1]}` : ""} ${m[4]}:${m[5]}`;
 }
+
+const WEEKDAYS_RU = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"] as const;
+
+/** Short Russian weekday of the wall date in a local ISO string ("2026-11-20T…" → "пт"). */
+export function weekdayRu(iso: string): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return null;
+  return WEEKDAYS_RU[new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))).getUTCDay()] ?? null;
+}
+
+/** "2026-11-20 (пт) 14:32" — the wall time as shown in WhatsApp, with weekday for resolving "до пятницы". */
+export function promptTime(iso: string): string {
+  const wd = weekdayRu(iso);
+  return `${iso.slice(0, 10)}${wd ? ` (${wd})` : ""} ${iso.slice(11, 16)}`;
+}

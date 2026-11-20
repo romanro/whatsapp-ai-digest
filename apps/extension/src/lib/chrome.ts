@@ -1,4 +1,4 @@
-import type { ContentRequest, ExtractResponse, ProbeResponse } from "./protocol.ts";
+import type { ContentRequest, ExtractResponse, ImagesResponse, ProbeResponse } from "./protocol.ts";
 
 export const WHATSAPP_ORIGIN = "https://web.whatsapp.com";
 
@@ -21,6 +21,7 @@ async function send<T>(tabId: number, msg: ContentRequest): Promise<T> {
 export const probeTab = (tabId: number) => send<ProbeResponse>(tabId, { type: "wad:probe" });
 export const extractFromTab = (tabId: number, dateOrderFallback: "DMY" | "MDY" | "YMD") =>
   send<ExtractResponse>(tabId, { type: "wad:extract", dateOrderFallback });
+export const captureImagesFromTab = (tabId: number, refs: string[]) => send<ImagesResponse>(tabId, { type: "wad:images", refs });
 
 /** Last summary is kept only in chrome.storage.session (memory, cleared when the browser closes). */
 export async function loadLastResult<T>(): Promise<T | null> {

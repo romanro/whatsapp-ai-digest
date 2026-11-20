@@ -6,7 +6,8 @@ import { AiError, type AiProvider } from "./ai/provider.ts";
 import { summarize } from "./summarizer.ts";
 
 export const VERSION = "0.1.0";
-const BODY_LIMIT = 1_000_000; // 1 MB — matches LIMITS.maxTotalChars with JSON overhead (UTF-8 Hebrew/Cyrillic is 2 bytes/char).
+// Text (LIMITS.maxTotalChars, 2 bytes/char for Hebrew/Cyrillic) + up to LIMITS.maxImages compressed photos.
+const BODY_LIMIT = 16_000_000;
 
 const AI_ERROR_STATUS: Record<AiError["code"], number> = {
   not_configured: 503,
@@ -71,6 +72,10 @@ export function buildApp(config: AppConfig, provider: AiProvider): FastifyInstan
         configured,
         modelAvailable: status.available,
         message: status.message,
+        vision: {
+          model: provider.visionModel,
+          available: configured && provider.visionModel ? await provider.checkVisionModel() : null,
+        },
       },
     });
   });
@@ -92,10 +97,19 @@ export function buildApp(config: AppConfig, provider: AiProvider): FastifyInstan
     inFlight = true;
     const started = Date.now();
     try {
-      const result = await summarize(parsed.data, provider, { batchMaxChars: config.batchMaxChars });
+      const result = await summarize(parsed.data, provider, {
+        batchMaxChars: config.batchMaxChars,
+        onImageError: (code) => req.log.warn({ code }, "photo not analysed"),
+      });
       // Metadata only — never message contents.
       req.log.info(
-        { messages: result.meta.messagesAnalyzed, batches: result.meta.batches, ms: Date.now() - started },
+        {
+          messages: result.meta.messagesAnalyzed,
+          batches: result.meta.batches,
+          images: result.meta.imagesAnalyzed,
+          imagesFailed: result.meta.imagesFailed,
+          ms: Date.now() - started,
+        },
         "summary generated",
       );
       return result;

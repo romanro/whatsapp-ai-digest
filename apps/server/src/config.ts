@@ -9,10 +9,11 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 loadDotenv({ path: path.resolve(here, "../.env"), quiet: true });
 
 const PROVIDER_PRESETS = {
-  groq: { baseURL: "https://api.groq.com/openai/v1", defaultModel: "openai/gpt-oss-20b" },
-  openai: { baseURL: "https://api.openai.com/v1", defaultModel: "gpt-4o-mini" },
-  gemini: { baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/", defaultModel: "gemini-2.0-flash" },
-  ollama: { baseURL: "http://127.0.0.1:11434/v1", defaultModel: "llama3.1" },
+  // qwen/qwen3.8-27b is Groq's only image-capable model as of 2026-11-20 (a *preview* model — may change).
+  groq: { baseURL: "https://api.groq.com/openai/v1", defaultModel: "openai/gpt-oss-20b", defaultVisionModel: "qwen/qwen3.8-27b" },
+  openai: { baseURL: "https://api.openai.com/v1", defaultModel: "gpt-4o-mini", defaultVisionModel: "gpt-4o-mini" },
+  gemini: { baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/", defaultModel: "gemini-2.0-flash", defaultVisionModel: "gemini-2.0-flash" },
+  ollama: { baseURL: "http://127.0.0.1:11434/v1", defaultModel: "llama3.1", defaultVisionModel: null },
 } as const;
 export type ProviderName = keyof typeof PROVIDER_PRESETS;
 
@@ -25,6 +26,8 @@ const EnvSchema = z.object({
   AI_API_KEY: z.preprocess(emptyToUndef, z.string().optional()),
   AI_BASE_URL: z.preprocess(emptyToUndef, z.url().optional()),
   AI_MODEL: z.preprocess(emptyToUndef, z.string().optional()),
+  /** Image-capable model for photo analysis; "off" disables photo analysis. */
+  VISION_MODEL: z.preprocess(emptyToUndef, z.string().optional()),
   PORT: z.preprocess(emptyToUndef, z.coerce.number().int().min(1).max(65535).default(BACKEND_PORT)),
   ALLOWED_EXTENSION_IDS: z.preprocess(emptyToUndef, z.string().default("fjldfeefkijllcoohbgfdodnkoeoedkg")),
   BATCH_MAX_CHARS: z.preprocess(emptyToUndef, z.coerce.number().int().min(2000).max(200_000).default(12_000)),
@@ -41,6 +44,8 @@ export interface AppConfig {
     provider: ProviderName;
     baseURL: string;
     model: string;
+    /** null = photo analysis disabled. */
+    visionModel: string | null;
     apiKey: string | undefined;
   };
 }
@@ -63,6 +68,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       provider: e.AI_PROVIDER,
       baseURL: e.AI_BASE_URL ?? preset.baseURL,
       model: (isGroq ? e.GROQ_MODEL : e.AI_MODEL) ?? preset.defaultModel,
+      visionModel: e.VISION_MODEL === "off" ? null : (e.VISION_MODEL ?? preset.defaultVisionModel),
       apiKey: isGroq ? e.GROQ_API_KEY : (e.AI_API_KEY ?? (e.AI_PROVIDER === "ollama" ? "ollama" : undefined)),
     },
   };

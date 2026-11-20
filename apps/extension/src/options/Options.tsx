@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { DEFAULT_BACKEND_URL, PERIODS, PERIOD_LABELS_RU, type DateOrder, type Period } from "@wad/shared";
+import { DEFAULT_BACKEND_URL, LIMITS, PERIODS, PERIOD_LABELS_RU, type DateOrder, type Period } from "@wad/shared";
 import { DEFAULT_SETTINGS, isLocalBackendUrl, loadSettings, saveSettings, type Settings } from "../lib/settings.ts";
 import { clearLastResult } from "../lib/chrome.ts";
 
@@ -55,6 +55,28 @@ export function Options() {
           </select>
         </label>
 
+        <label className="field checkbox-field">
+          <span>
+            <input
+              type="checkbox"
+              checked={s.includeImagesDefault}
+              onChange={(e) => setS({ ...s, includeImagesDefault: e.target.checked })}
+            />{" "}
+            Включать «Анализировать фото» по умолчанию
+          </span>
+        </label>
+
+        <label className="field">
+          <span>Максимум фото за одну сводку (1–{LIMITS.maxImages})</span>
+          <input
+            type="number"
+            min={1}
+            max={LIMITS.maxImages}
+            value={s.maxImages}
+            onChange={(e) => setS({ ...s, maxImages: Math.min(LIMITS.maxImages, Math.max(1, Number(e.target.value) || 1)) })}
+          />
+        </label>
+
         <div className="row">
           <button className="primary" onClick={() => void onSave()}>
             Сохранить
@@ -79,7 +101,12 @@ export function Options() {
             имени (номер телефона) заменяются на «Участник N». Это базовая защита: имена, адреса, сведения о детях и другие
             детали в тексте сообщений могут остаться.
           </li>
-          <li>Обрабатывается только текст. Фото, видео, голосовые и файлы не скачиваются и не отправляются.</li>
+          <li>
+            По умолчанию обрабатывается только текст. Если включить «Анализировать фото», выбранные вами фото, которые WhatsApp уже
+            показал в чате, отправляются в Groq <b>как есть</b> — лица, имена и другие данные на них не скрываются. Перед отправкой
+            вы видите все фото и можете снять отметку с любого. Видео, голосовые и файлы не обрабатываются; расширение ничего не
+            скачивает само.
+          </li>
           <li>Сообщения не сохраняются на диск и не пишутся в журналы. Последняя сводка хранится только в памяти браузера до его закрытия.</li>
           <li>Нет аналитики, телеметрии и сторонних трекеров. API-ключ Groq хранится только на локальном сервере (файл .env).</li>
         </ul>

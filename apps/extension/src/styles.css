@@ -133,8 +133,29 @@ h1 { font-size: 15px; font-weight: 650; }
 .badge { font-size: 11px; font-weight: 500; border-radius: 6px; padding: 0 6px; margin-left: 4px; white-space: nowrap; }
 .badge-proposed { background: var(--warn-bg); color: var(--warn-text); }
 .badge-unclear { background: var(--chip); color: var(--muted); }
-.sources { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 4px; color: var(--muted); font-size: 11px; }
-.source::before { content: "🕒 "; }
+.sources { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; color: var(--muted); font-size: 11px; }
+.source summary { cursor: pointer; list-style: none; width: fit-content; border-radius: 6px; padding: 1px 4px; margin-left: -4px; }
+.source summary::-webkit-details-marker { display: none; }
+.source summary::before { content: "🕒 "; }
+.source summary:hover { background: var(--chip); color: var(--text); }
+.source[open] summary { color: var(--text); }
+.source-body { margin: 4px 0 6px; padding: 6px 8px; border-left: 2px solid var(--accent); background: var(--chip); border-radius: 0 8px 8px 0; display: flex; flex-direction: column; gap: 6px; }
+.source-body p { margin: 2px 0 0; font-size: 12px; color: var(--text); white-space: pre-wrap; unicode-bidi: plaintext; }
+.source-original p { color: var(--muted); }
+.source-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; color: var(--muted); }
+.toggle { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; font-size: 13px; }
+.toggle input { margin-top: 3px; accent-color: var(--accent); }
+.block { display: block; }
+.beta { font-size: 10px; background: var(--accent-soft); color: var(--accent); border-radius: 4px; padding: 0 4px; margin-left: 2px; vertical-align: 1px; }
+.photos { margin: 8px 0; }
+.photos-head { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
+.photo-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.photo { position: relative; border-radius: 8px; overflow: hidden; border: 2px solid var(--accent); cursor: pointer; aspect-ratio: 1; background: var(--chip); }
+.photo.off { border-color: var(--border); }
+.photo.off img { opacity: 0.35; filter: grayscale(1); }
+.photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo input { position: absolute; top: 4px; right: 4px; accent-color: var(--accent); width: 16px; height: 16px; }
+.photo-meta { position: absolute; left: 0; right: 0; bottom: 0; font-size: 10px; color: #fff; background: linear-gradient(transparent, rgba(0, 0, 0, 0.7)); padding: 8px 4px 2px; }
 .empty { color: var(--muted); padding: 12px 0; text-align: center; }
 .footnote { color: var(--muted); font-size: 11px; margin-top: 12px; }
 

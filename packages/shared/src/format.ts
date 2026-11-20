@@ -16,6 +16,7 @@ export function formatIsoDateRu(date: string | null): string | null {
 const srcs = (sources: SourceRef[]) =>
   sources.length ? ` (${sources.map((s) => formatWallTime(s.timestamp)).join(", ")})` : "";
 const st = (s: ItemStatus) => (s === "confirmed" ? "" : ` [${STATUS_LABELS_RU[s]}]`);
+const more = (details: string | null) => (details && details.trim() ? `\n   ${details.trim()}` : "");
 const join = (...parts: (string | null | undefined)[]) => parts.filter((p) => p && p.trim()).join(" — ");
 
 /** Plain-text rendering suitable for pasting into WhatsApp (uses *bold*). */
@@ -29,6 +30,7 @@ export function summaryToPlainText(groupName: string, periodLabel: string, s: En
   };
 
   section("announcements", s.announcements.map((a) => join(a.title, a.details) + st(a.status) + srcs(a.sources)));
+  // events/tasks/payments/changes: headline first, then details on the next line
   section(
     "events",
     s.events.map(
@@ -39,14 +41,18 @@ export function summaryToPlainText(groupName: string, periodLabel: string, s: En
           e.location,
         ) +
         st(e.status) +
-        srcs(e.sources),
+        srcs(e.sources) +
+        more(e.details),
     ),
   );
   section(
     "tasks",
     s.tasks.map(
       (t) =>
-        join(t.task, t.assignee, t.deadline ? `до ${formatIsoDateRu(t.deadline)}` : t.deadlineText) + st(t.status) + srcs(t.sources),
+        join(t.task, t.assignee, t.deadline ? `до ${formatIsoDateRu(t.deadline)}` : t.deadlineText) +
+        st(t.status) +
+        srcs(t.sources) +
+        more(t.details),
     ),
   );
   section(
@@ -60,10 +66,14 @@ export function summaryToPlainText(groupName: string, periodLabel: string, s: En
           p.method,
         ) +
         st(p.status) +
-        srcs(p.sources),
+        srcs(p.sources) +
+        more(p.details),
     ),
   );
-  section("changes", s.changes.map((c) => join(c.what, c.before ? `было: ${c.before}` : null, `стало: ${c.after}`) + srcs(c.sources)));
+  section(
+    "changes",
+    s.changes.map((c) => join(c.what, c.before ? `было: ${c.before}` : null, `стало: ${c.after}`) + srcs(c.sources) + more(c.details)),
+  );
   section("other", s.other.map((a) => join(a.title, a.details) + st(a.status) + srcs(a.sources)));
 
   if (warnings.length) lines.push("", "⚠️ Сводка может быть неполной:", ...warnings.map((w) => `– ${w}`));

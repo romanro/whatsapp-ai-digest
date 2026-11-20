@@ -14,8 +14,14 @@ describe("prepareMessages", () => {
     expect(prompt[1]?.text).toContain("[телефон скрыт]");
     expect(prompt[1]?.text).not.toContain("050-000-0002");
     expect(prompt[2]?.from).toBe("Участник 1");
-    expect(prompt[1]?.t).toBe("2026-11-20 08:05");
-    expect(sourceMap.get("m4")).toEqual({ id: "a4", timestamp: "2026-11-20T12:00:00+02:00", sender: "Ganenet" });
+    expect(prompt[1]?.t).toBe("2026-11-20 (пт) 08:05");
+    expect(sourceMap.get("m4")).toEqual({
+      id: "a4",
+      timestamp: "2026-11-20T12:00:00+02:00",
+      sender: "Ganenet",
+      text: "Zoo trip moved to Monday 24.11",
+      translation: null,
+    });
   });
 });
 
@@ -65,6 +71,7 @@ describe("AI response parsing & validation", () => {
     }) as Record<string, unknown[]>;
     expect(out.events?.[0]).toEqual({
       title: "Утренник",
+      details: null,
       date: null,
       time: null,
       dateText: null,
@@ -92,7 +99,7 @@ describe("enrichSummary", () => {
     );
     if (!parsed.ok) throw new Error(parsed.error);
     const { summary, unknownDropped } = enrichSummary(parsed.value, sourceMap);
-    expect(summary.tasks[0]?.sources).toEqual([{ id: "a1", timestamp: "2026-11-19T20:30:00+02:00", sender: "אמא של נועה" }]);
+    expect(summary.tasks[0]?.sources).toMatchObject([{ id: "a1", timestamp: "2026-11-19T20:30:00+02:00", sender: "אמא של נועה" }]);
     expect(summary.other).toEqual([]);
     expect(unknownDropped).toBe(1);
   });

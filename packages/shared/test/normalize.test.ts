@@ -47,6 +47,11 @@ describe("dedupeMessages", () => {
     expect(out).toHaveLength(2);
   });
 
+  it("keeps two captionless photos from the same sender in the same minute", () => {
+    const photo = { ...base, text: "", imageRefs: ["r1"] };
+    expect(dedupeMessages([photo, { ...photo, key: "p2", imageRefs: ["r2"] }])).toHaveLength(2);
+  });
+
   it("does not merge untimed messages by content", () => {
     const u = { ...base, timestamp: null };
     expect(dedupeMessages([u, { ...u, key: "d" }])).toHaveLength(2);

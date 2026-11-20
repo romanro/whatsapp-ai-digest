@@ -10,6 +10,14 @@ export interface JsonCompletionRequest {
   maxTokens: number;
 }
 
+export interface VisionRequest {
+  system: string;
+  /** Short instruction/context placed next to the image. */
+  user: string;
+  imageDataUrl: string;
+  maxTokens: number;
+}
+
 export interface ModelStatus {
   available: boolean | null;
   message: string | null;
@@ -18,11 +26,17 @@ export interface ModelStatus {
 export interface AiProvider {
   readonly name: string;
   readonly model: string;
+  /** Image-capable model, or null when photo analysis is disabled. */
+  readonly visionModel: string | null;
   isConfigured(): boolean;
   /** Checks that the configured model is listed by the provider. */
   checkModel(): Promise<ModelStatus>;
+  /** Checks that the vision model is listed (null = unknown / not configured). */
+  checkVisionModel(): Promise<boolean | null>;
   /** Returns the raw JSON string produced by the model. */
   completeJson(req: JsonCompletionRequest): Promise<string>;
+  /** Returns the raw JSON string produced by the vision model for one image. */
+  completeVisionJson(req: VisionRequest): Promise<string>;
 }
 
 export type AiErrorCode =
