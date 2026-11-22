@@ -69,6 +69,8 @@ CONTENT RULES:
   * "announcements" only for important notices without a date/time and without money; "other" for anything else important.
 - Text in "[Фото: …]" blocks is what a separate model read from photos (board, textbook page, announcement). Treat it as
   the content of that message: homework from a photo is a task, a printed notice is an announcement, etc.
+  It is machine-read: Hebrew words may have look-alike letters swapped (ע/צ, ף/ר, ה/ח…) — read them by context as
+  the real word that fits, and trust the photo text over its short Russian description when they disagree.
 - "translations": for EVERY message id you cite in any sourceIds whose text is not entirely in Russian (Hebrew, English,
   mixed), give a faithful, complete Russian translation of the whole message (not a summary; keep numbers, dates, names,
   links). Skip messages already in Russian. Do not translate messages you don't cite.
@@ -134,6 +136,9 @@ Return ONLY a JSON object: {"text": string, "description": string}
 - "text": all readable text in the photo, verbatim, in its original language(s) (Hebrew, Russian, English…), preserving
   line breaks, numbers, page/exercise numbers, dates and amounts. For textbook/workbook pages focus on headings, page
   numbers, exercise numbers and instructions rather than every word of long body text. Empty string if there is no text.
+- Hebrew: read right to left, letter by letter. Decorative and handwritten fonts make letters look alike
+  (ע/צ, ף/ר/ך, ה/ח/ת, ו/ז/ן, ב/כ, ס/ם, ד/ר). Every Hebrew word you output must be a real word that fits the sentence;
+  when a letter is ambiguous, pick the reading that gives a real, meaningful word. Skip logos and stylised brand names.
 - "description": 1–2 sentences in Russian saying what the photo is and why it may matter
   (e.g. "Фото доски с домашним заданием по математике на 21.11"). Do not describe or identify people's faces;
   if the photo mainly shows people, just say e.g. "Фото детей на празднике" without details.`;

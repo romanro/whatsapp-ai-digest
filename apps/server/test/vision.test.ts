@@ -90,6 +90,11 @@ describe("photo analysis", () => {
     expect(VISION_SYSTEM).toMatch(/Do not describe or identify people's faces/);
   });
 
+  it("both prompts guard against look-alike Hebrew letters in photo text", () => {
+    expect(VISION_SYSTEM).toMatch(/ע\/צ, ף\/ר\/ך/);
+    expect(buildChunkPrompt({ groupName: "G", clientNow: "2026-11-20T18:00:00+02:00", messages: [] }).system).toMatch(/look-alike letters/);
+  });
+
   it("parses and formats readings", () => {
     expect(parseImageReading("```json\n" + reading("abc", "desc") + "\n```")).toEqual({ text: "abc", description: "desc" });
     expect(parseImageReading("{}")).toBeNull();
