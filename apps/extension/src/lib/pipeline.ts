@@ -14,6 +14,7 @@ import {
   type SummarizeRequest,
 } from "@wad/shared";
 import type { CapturedImage, ExtractionResult } from "./protocol.ts";
+import type { ParsedDocument } from "./documents.ts";
 
 export interface PrepareOptions {
   /** Opt-in photo analysis. Off = text only (default). */
@@ -26,6 +27,14 @@ export const TEXT_ONLY: PrepareOptions = { includeImages: false, maxImages: DEFA
 export interface ImageCandidate {
   ref: string;
   messageId: string;
+  timestamp: string;
+  sender: string | null;
+}
+
+/** A document card seen in the chat; its file is only used if the user adds it. */
+export interface DocumentCandidate {
+  messageId: string;
+  name: string;
   timestamp: string;
   sender: string | null;
 }
@@ -44,6 +53,8 @@ export interface PreparedPayload {
   imageCandidates: ImageCandidate[];
   /** Photos in the period beyond maxImages. */
   imagesOverLimit: number;
+  /** Documents in the period (newest first, at most LIMITS.maxDocuments). */
+  documentCandidates: DocumentCandidate[];
 }
 
 type TimedMessage = RawMessage & { timestamp: string };
@@ -76,7 +87,7 @@ export function preparePayload(
       `У ${stats.photoDateUncertain} фото без подписи дата определена по соседним сообщениям и может быть неточной.`,
     );
   }
-  const skippedMedia =stats.otherMedia + (opts.includeImages ? 0 : stats.photoOnly);
+  const skippedMedia = stats.otherMedia + (opts.includeImages ? 0 : stats.photoOnly);
   if (skippedMedia > 0) {
     coverage.warnings.push(
       opts.includeImages
@@ -91,7 +102,7 @@ export function preparePayload(
   }
 
   let inPeriod = filterByPeriod(extraction.messages, period, now) as TimedMessage[];
-  if (!opts.includeImages) inPeriod = inPeriod.filter((m) => m.text.trim() !== "");
+  if (!opts.includeImages) inPeriod = inPeriod.filter((m) => m.text.trim() !== "" || m.documents?.length);
 
   // Photos: newest first, capped.
   const allCandidates: ImageCandidate[] = [];
@@ -105,8 +116,12 @@ export function preparePayload(
   if (imagesOverLimit > 0) {
     coverage.warnings.push(`Будут проанализированы только ${imageCandidates.length} самых новых фото из ${allCandidates.length} (лимит в настройках).`);
   }
-  const withCandidate = new Set(imageCandidates.map((c) => c.messageId));
-  // A captionless photo message is only useful if its photo can be sent.
+  const documentCandidates: DocumentCandidate[] = [...inPeriod]
+    .reverse()
+    .flatMap((m) => (m.documents ?? []).map((name) => ({ messageId: m.key, name, timestamp: m.timestamp, sender: m.sender })))
+    .slice(0, LIMITS.maxDocuments);
+  const withCandidate = new Set([...imageCandidates, ...documentCandidates].map((c) => c.messageId));
+  // A captionless photo/document message is only useful if its attachment can be sent (decided in attachments()).
   inPeriod = inPeriod.filter((m) => m.text.trim() !== "" || withCandidate.has(m.key));
   if (!inPeriod.length) return { empty: true, coverage };
 
@@ -146,6 +161,7 @@ export function preparePayload(
       coverage,
       messages,
       images: [],
+      documents: [],
     },
     coverage,
     redactions: counts,
@@ -155,6 +171,7 @@ export function preparePayload(
     inPeriod: inPeriod.length,
     imageCandidates: imageCandidates.filter((c) => kept.has(c.messageId)),
     imagesOverLimit,
+    documentCandidates: documentCandidates.filter((c) => kept.has(c.messageId)),
   };
 }
 
@@ -166,13 +183,34 @@ export function attachImages(
   prepared: PreparedPayload,
   captured: CapturedImage[],
   selectedRefs: ReadonlySet<string>,
-): { request: SummarizeRequest; photosSent: number } {
+  documents: readonly { messageId: string; doc: ParsedDocument }[] = [],
+): { request: SummarizeRequest; photosSent: number; documentsSent: number; documentRedactions: RedactionCounts } {
   const byRef = new Map(prepared.imageCandidates.map((c) => [c.ref, c]));
   const images = captured
     .filter((c) => c.dataUrl && selectedRefs.has(c.ref) && byRef.has(c.ref))
     .slice(0, LIMITS.maxImages)
     .map((c) => ({ messageId: (byRef.get(c.ref) as ImageCandidate).messageId, dataUrl: c.dataUrl as string }));
-  const withImage = new Set(images.map((i) => i.messageId));
-  const messages = prepared.request.messages.filter((m) => m.text.trim() !== "" || withImage.has(m.id));
-  return { request: { ...prepared.request, messages, images }, photosSent: images.length };
+  // Document text is redacted here, in the browser, like message text (scanned pages go as images, like photos).
+  const documentRedactions = emptyCounts();
+  const docMessages = new Set(prepared.documentCandidates.map((c) => c.messageId));
+  const docs = documents
+    .filter((d) => docMessages.has(d.messageId))
+    .slice(0, LIMITS.maxDocuments)
+    .map(({ messageId, doc }) => ({
+      messageId,
+      name: doc.name,
+      kind: doc.kind,
+      pages: doc.pages,
+      ...(doc.text !== undefined
+        ? { text: redactText(doc.text, documentRedactions).text.slice(0, LIMITS.maxDocumentChars) }
+        : { pageImages: doc.pageImages }),
+    }));
+  const withAttachment = new Set([...images, ...docs].map((i) => i.messageId));
+  const messages = prepared.request.messages.filter((m) => m.text.trim() !== "" || withAttachment.has(m.id));
+  return {
+    request: { ...prepared.request, messages, images, documents: docs },
+    photosSent: images.length,
+    documentsSent: docs.length,
+    documentRedactions,
+  };
 }

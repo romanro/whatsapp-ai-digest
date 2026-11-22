@@ -32,8 +32,12 @@ import {
 import {
   attachImages,
   preparePayload,
+  type DocumentCandidate,
   type PreparedPayload,
 } from "../lib/pipeline.ts";
+import { normalizeDocName, parseDocument, type ParsedDocument } from "../lib/documents.ts";
+import { findDownloads } from "../lib/downloads.ts";
+import { fetchLocalDocument } from "../lib/api.ts";
 import type { CapturedImage } from "../lib/protocol.ts";
 import { loadSettings, type Settings } from "../lib/settings.ts";
 import { SummaryView } from "./SummaryView.tsx";
@@ -43,11 +47,119 @@ import { NOT_GROUP_MESSAGE } from "../content/extractor.ts";
 /** The popup page can also be opened in a full browser tab (⤢) to read a long summary and its photos. */
 const IN_TAB = new URLSearchParams(location.search).has("tab");
 
+interface DocSlot {
+  candidate: DocumentCandidate;
+  state: "none" | "reading" | "ok" | "error";
+  doc?: ParsedDocument;
+  error?: string;
+  /** Where the file came from: found in Chrome's downloads, or added by hand. */
+  source?: "downloads" | "manual";
+}
+
 interface Review {
   payload: PreparedPayload;
   /** Photos read from the page (only when photo analysis is on). */
   photos: CapturedImage[];
   selected: Set<string>;
+  /** Document cards in the period; the user adds the downloaded files. */
+  docs: DocSlot[];
+  /** Files that matched no document in the chat. */
+  unmatched: string[];
+}
+
+function docState(slot: DocSlot): string {
+  if (slot.state === "reading") return "читаю…";
+  if (slot.state === "error") return slot.error ?? "ошибка";
+  if (slot.state === "none" || !slot.doc) return "нет в Загрузках — скачайте в WhatsApp";
+  const d = slot.doc;
+  const size = d.text !== undefined ? `${d.text.length.toLocaleString("ru-RU")} симв.` : `скан, ${d.pageImages?.length ?? 0} стр. как фото`;
+  return `✓ ${slot.source === "downloads" ? "из Загрузок, " : ""}${d.pages ? `${d.pages} стр., ` : ""}${size}${d.truncated ? " (обрезан)" : ""}`;
+}
+
+function DocumentPicker({
+  review,
+  onFiles,
+  onRescan,
+}: {
+  review: Review;
+  onFiles: (files: File[]) => void;
+  onRescan: () => void;
+}) {
+  const [over, setOver] = useState(false);
+  if (!review.docs.length) return null;
+  const added = review.docs.filter((d) => d.state === "ok").length;
+  return (
+    <div className="docs">
+      <strong>
+        Документы: добавлено {added} из {review.docs.length}
+      </strong>
+      {review.docs.map((slot, i) => (
+        <div key={i} className={`doc-row ${slot.state}`}>
+          <span className="doc-name" dir="auto">
+            📄 {slot.candidate.name}
+          </span>
+          <span className="doc-state">{docState(slot)}</span>
+        </div>
+      ))}
+      {review.docs.some((d) => d.state === "none" || d.state === "error") && (
+        <span className="sub block">
+          Нажмите на документ в WhatsApp → «Скачать», и он подхватится из папки «Загрузки»{" "}
+          {IN_TAB ? "сам." : "при следующем открытии этого окна."}{" "}
+          <button className="link" onClick={onRescan}>
+            Проверить Загрузки
+          </button>
+        </span>
+      )}
+      {review.unmatched.length > 0 && (
+        <div className="warning" role="status">
+          Не нашёл в чате документ с таким именем: {review.unmatched.join(", ")}
+        </div>
+      )}
+      {IN_TAB ? (
+        <div
+          className={over ? "dropzone over" : "dropzone"}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setOver(true);
+          }}
+          onDragLeave={() => setOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setOver(false);
+            onFiles(Array.from(e.dataTransfer.files));
+          }}
+        >
+          Если файл сохранён в другом месте — перетащите его сюда или выберите:
+          <input
+            type="file"
+            multiple
+            accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            onChange={(e) => {
+              onFiles(Array.from(e.target.files ?? []));
+              e.target.value = "";
+            }}
+          />
+          <span className="sub block">
+            Файл читается здесь, на компьютере. В Groq уйдёт его текст (телефоны, email и номера карт скрываются) или, если это
+            скан, первые {3} страницы как картинки.
+          </span>
+        </div>
+      ) : (
+        <button
+          className="secondary"
+          onClick={() => void chrome.tabs.create({ url: chrome.runtime.getURL("popup.html?tab=1") })}
+        >
+          Добавить файл вручную — откроется во вкладке
+        </button>
+      )}
+      {!IN_TAB && (
+        <span className="sub">
+          Выбор файла закрывает это маленькое окно, поэтому вручную файлы добавляются во вкладке. Там нажмите «Сформировать
+          сводку» ещё раз — отметки сохранятся.
+        </span>
+      )}
+    </div>
+  );
 }
 
 type Phase =
@@ -84,8 +196,12 @@ const savedAt = (iso: string) =>
 function jobNote(job: Job | null): string | undefined {
   if (job?.reused)
     return "Новых сообщений и фото с прошлой сводки нет — показана сохранённая, в Groq ничего не отправлялось.";
-  if (job?.photosCached)
-    return `${job.photosCached} фото уже были распознаны раньше — повторно в Groq не отправлялись.`;
+  const parts = [
+    job?.photosCached ? `${job.photosCached} фото` : null,
+    job?.documentsCached ? `${job.documentsCached} документ(а)` : null,
+  ].filter(Boolean);
+  if (parts.length)
+    return `${parts.join(" и ")} уже были разобраны раньше — повторно в Groq не отправлялись.`;
   return undefined;
 }
 
@@ -199,8 +315,6 @@ export function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [period, setPeriod] = useState<Period>("24h");
   const [includeImages, setIncludeImages] = useState(false);
-  const [consentPermission, setConsentPermission] = useState(false);
-  const [consentUpload, setConsentUpload] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [copied, setCopied] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -261,15 +375,13 @@ export function App() {
   const probe = status.whatsapp.state === "ok" ? status.whatsapp.data : null;
   const groupName = probe?.chatOpen && probe.isGroup ? probe.groupName : null;
 
-  // Checkboxes are remembered per group; the group's saved summary is shown when nothing else is.
+  // The photo switch is remembered per group; the group's saved summary is shown when nothing else is.
   useEffect(() => {
     if (!groupName) return;
     let cancelled = false;
     void (async () => {
       const prefs = await loadGroupPrefs(chromeLocal, groupName).catch(() => null);
       if (cancelled) return;
-      setConsentPermission(prefs?.permission ?? false);
-      setConsentUpload(prefs?.upload ?? false);
       if (prefs) setIncludeImages(prefs.images);
       const saved = await loadSavedSummary(chromeLocal, groupName).catch(() => null);
       if (cancelled) return;
@@ -285,16 +397,9 @@ export function App() {
     };
   }, [groupName]);
 
-  function updatePrefs(change: Partial<{ permission: boolean; upload: boolean; images: boolean }>) {
-    const next = {
-      permission: change.permission ?? consentPermission,
-      upload: change.upload ?? consentUpload,
-      images: change.images ?? includeImages,
-    };
-    setConsentPermission(next.permission);
-    setConsentUpload(next.upload);
-    setIncludeImages(next.images);
-    if (groupName) void saveGroupPrefs(chromeLocal, groupName, next).catch(() => undefined);
+  function setPhotos(images: boolean) {
+    setIncludeImages(images);
+    if (groupName) void saveGroupPrefs(chromeLocal, groupName, { images }).catch(() => undefined);
   }
   const health = status.backend.state === "ok" ? status.backend.data : null;
   const aiReady = !!health?.ai.configured && health.ai.modelAvailable !== false;
@@ -311,8 +416,6 @@ export function App() {
     !!isGroup &&
     !!health &&
     aiReady &&
-    consentPermission &&
-    consentUpload &&
     !busy &&
     status.tabId !== null;
 
@@ -345,10 +448,12 @@ export function App() {
       const selected = new Set(
         photos.filter((p) => p.dataUrl).map((p) => p.ref),
       );
+      const docs: DocSlot[] = prepared.documentCandidates.map((candidate) => ({ candidate, state: "none" }));
       setPhase({
         kind: "review",
-        review: { payload: prepared, photos, selected },
+        review: { payload: prepared, photos, selected, docs, unmatched: [] },
       });
+      void scanDownloads(docs);
     } catch {
       setPhase({
         kind: "error",
@@ -368,12 +473,91 @@ export function App() {
     });
   }
 
+  const updateSlot = (index: number, patch: Partial<DocSlot>) =>
+    setPhase((ph) => {
+      if (ph.kind !== "review") return ph;
+      const docs = ph.review.docs.map((d, i) => (i === index ? { ...d, ...patch } : d));
+      return { kind: "review", review: { ...ph.review, docs } };
+    });
+
+  /** Reads a file into a document slot (in this page — nothing is sent to Groq yet). */
+  function readInto(index: number, file: File, source: DocSlot["source"]) {
+    updateSlot(index, { state: "reading", doc: undefined, error: undefined, source });
+    void parseDocument(file).then((r) =>
+      updateSlot(index, r.ok ? { state: "ok", doc: r.doc } : { state: "error", error: r.error }),
+    );
+  }
+
+  /** Picks up documents the user downloaded in WhatsApp from Chrome's download history (via the local server). */
+  async function scanDownloads(docs: DocSlot[]) {
+    if (!settings) return;
+    const open = docs.flatMap((d, index) =>
+      d.state === "none" || (d.state === "error" && d.source === "downloads") ? [{ index, name: d.candidate.name }] : [],
+    );
+    if (!open.length) return;
+    try {
+      const found = await findDownloads(open.map((o) => o.name));
+      await Promise.all(
+        open.map(async ({ index }, k) => {
+          const hit = found[k];
+          if (!hit) return;
+          updateSlot(index, { state: "reading", source: "downloads", error: undefined });
+          try {
+            readInto(index, await fetchLocalDocument(settings.backendUrl, hit.path, hit.name), "downloads");
+          } catch (err) {
+            updateSlot(index, { state: "error", error: err instanceof Error ? err.message : "Не удалось прочитать файл." });
+          }
+        }),
+      );
+    } catch {
+      // Download history unavailable — the manual picker still works.
+    }
+  }
+
+  // While the review is open, a download that finishes in WhatsApp is picked up at once.
+  const [downloadTick, setDownloadTick] = useState(0);
+  const hasDocs = phase.kind === "review" && phase.review.docs.length > 0;
+  useEffect(() => {
+    if (!hasDocs || !chrome.downloads?.onChanged) return;
+    const onChanged = (delta: chrome.downloads.DownloadDelta) => {
+      if (delta.state?.current === "complete") setDownloadTick((t) => t + 1);
+    };
+    chrome.downloads.onChanged.addListener(onChanged);
+    return () => chrome.downloads.onChanged.removeListener(onChanged);
+  }, [hasDocs]);
+  useEffect(() => {
+    if (downloadTick && phase.kind === "review") void scanDownloads(phase.review.docs);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [downloadTick]);
+
+  /** Matches added files to the document cards by name, then reads them. */
+  function onFiles(files: File[]) {
+    if (phase.kind !== "review") return;
+    const slots = phase.review.docs;
+    const unmatched: string[] = [];
+    const taken = new Set<number>();
+    for (const file of files) {
+      const name = normalizeDocName(file.name);
+      let index = slots.findIndex((d, i) => !taken.has(i) && normalizeDocName(d.candidate.name) === name);
+      // A single document in the chat: accept the file even if the browser renamed it on download.
+      if (index === -1 && slots.length === 1 && !taken.has(0)) index = 0;
+      if (index === -1) {
+        unmatched.push(file.name);
+        continue;
+      }
+      taken.add(index);
+      readInto(index, file, "manual");
+    }
+    setPhase((ph) => (ph.kind === "review" ? { kind: "review", review: { ...ph.review, unmatched } } : ph));
+  }
+
   async function onSend(review: Review) {
     if (!settings) return;
     const { request } = attachImages(
       review.payload,
       review.photos,
       review.selected,
+      review.docs.flatMap((d) => (d.state === "ok" && d.doc ? [{ messageId: d.candidate.messageId, doc: d.doc }] : [])),
     );
     if (!request.messages.length) {
       return setPhase({
@@ -544,7 +728,7 @@ export function App() {
               type="checkbox"
               checked={photosOn}
               disabled={busy || !visionReady}
-              onChange={(e) => updatePrefs({ images: e.target.checked })}
+              onChange={(e) => setPhotos(e.target.checked)}
             />
             <span>
               Анализировать фото <span className="beta">бета</span>
@@ -558,37 +742,14 @@ export function App() {
         )}
 
         <div className="consent">
-          <label>
-            <input
-              type="checkbox"
-              checked={consentPermission}
-              onChange={(e) => updatePrefs({ permission: e.target.checked })}
-              disabled={busy}
-            />
-            <span>
-              Я подтверждаю, что имею право обрабатывать сообщения этой группы.
-            </span>
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={consentUpload}
-              onChange={(e) => updatePrefs({ upload: e.target.checked })}
-              disabled={busy}
-            />
-            <span>
-              Я согласен(на), что текст выбранных сообщений
-              {photosOn ? " и выбранные фото" : ""} будут отправлены в Groq для
-              анализа. Автоматическое чтение может противоречить условиям
-              использования WhatsApp.
-            </span>
-          </label>
           <details className="privacy">
             <summary>Конфиденциальность</summary>
             <p>
               Расширение только читает уже показанные на экране сообщения
               открытой группы — ничего не отправляет в WhatsApp и не меняет.
-              Перед отправкой номера телефонов, email и номера карт скрываются,
+              Текст выбранных сообщений{photosOn ? ", выбранные фото" : ""} и
+              документы уходят в Groq только после нажатия «Отправить в Groq» на
+              экране проверки. Перед отправкой номера телефонов, email и номера карт скрываются,
               а номера вместо имён заменяются на «Участник N». Имена, детали и
               свободный текст всё равно могут содержать личные данные — они
               будут переданы в Groq (облачный AI-сервис) через ваш локальный
@@ -598,7 +759,9 @@ export function App() {
               Сервер ничего не сохраняет и не пишет сообщения в журналы.
               Расширение хранит в Chrome последнюю сводку каждой группы и
               распознанный текст фото, чтобы не отправлять их повторно —
-              удалить: ⚙ → «Удалить сохранённые данные».
+              удалить: ⚙ → «Удалить сохранённые данные». Обрабатывайте только
+              группы, в которых вы вправе это делать; автоматическое чтение
+              может противоречить условиям использования WhatsApp.
             </p>
           </details>
         </div>
@@ -645,6 +808,7 @@ export function App() {
             </li>
           </ul>
           <PhotoPicker review={phase.review} onToggle={togglePhoto} />
+          <DocumentPicker review={phase.review} onFiles={onFiles} onRescan={() => void scanDownloads(phase.review.docs)} />
           <CoverageWarning coverage={phase.review.payload.coverage} />
           <div className="row">
             <button
@@ -655,6 +819,7 @@ export function App() {
             </button>
             <button
               className="primary"
+              disabled={phase.review.docs.some((d) => d.state === "reading")}
               onClick={() => void onSend(phase.review)}
             >
               Отправить в Groq
@@ -667,9 +832,14 @@ export function App() {
         <section className="card center">
           <span className="spinner big" />
           <p>
-            {phase.job.photos > 0
-              ? `Распознаю ${phase.job.photos} фото и анализирую`
-              : "Анализирую"}{" "}
+            {[
+              phase.job.photos > 0 ? `распознаю ${phase.job.photos} фото` : null,
+              phase.job.documents ? `разбираю ${phase.job.documents} документ(а)` : null,
+            ]
+              .filter(Boolean)
+              .join(", ")
+              .replace(/^./, (c) => c.toUpperCase()) || "Анализирую"}
+            {phase.job.photos > 0 || phase.job.documents ? " и анализирую" : ""}{" "}
             {phase.job.messages} сообщ. из «{phase.job.groupName}»…{" "}
             {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}
           </p>

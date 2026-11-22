@@ -46,6 +46,13 @@ Chrome popup (React) ──► content script (reads visible messages of the ope
 остановлен. Открой <https://web.whatsapp.com/>, зайди в группу, прокрути чат вверх на нужный период, потом обратно
 вниз, и нажми значок расширения.
 
+**Документы (PDF, DOCX).** Если в чате за период есть документы, экран проверки покажет их список. Расширение само файлы
+не скачивает: нажми на документ в WhatsApp → «Скачать», и расширение найдёт файл в истории загрузок Chrome (для этого
+нужно разрешение «Управление загрузками»; файл читает только локальный сервер, и только его). Если файл сохранён в
+другом месте, его можно добавить вручную во вкладке. Он читается на компьютере; в Groq уходит его текст (телефоны, email и номера карт
+скрываются), а для скана — первые 3 страницы как картинки. В сводке под источником будет краткое изложение документа,
+главное из него и, для коротких документов, перевод целиком. Старый формат .doc не поддерживается.
+
 **Обновление:** скачай и запусти установщик ещё раз (ключ и настройки сохранятся), затем нажми ↻ у расширения в
 `chrome://extensions` и обнови вкладку WhatsApp (F5).
 
@@ -237,8 +244,10 @@ keep data on your machine only.
 **What is done to protect it**
 
 - Nothing is read until you click, nothing is sent until you confirm: every summary shows what will be sent and needs
-  **Отправить в Groq**. The consent checkboxes are remembered per group.
-- Text only: media, voice notes and files are never downloaded or sent.
+  **Отправить в Groq**. There are no consent checkboxes: that button is the confirmation.
+- The extension never downloads anything. Text is sent; photos only with “Анализировать фото” (the ones you keep
+  selected); documents (PDF/DOCX) only if you download them in WhatsApp yourself and add them in the popup — their text
+  is redacted like messages, a scanned PDF goes as its first 3 page images. Video and voice notes are never sent.
 - Before upload (in the browser, and again on the server): phone numbers, emails, card numbers, IBANs and URL query
   strings are removed; senders shown as phone numbers become “Участник N”. WhatsApp's internal ids (which contain phone
   numbers) are hashed and never sent.
@@ -248,7 +257,7 @@ keep data on your machine only.
   headers or API keys, and stores nothing on disk.
 - The extension keeps in the Chrome profile (`chrome.storage.local`, on disk): the last summary of each group (up to 20
   groups, with the messages and photos it cites), the readings of analysed photos (so a photo is sent to Groq only once)
-  and the per-group checkboxes. If nothing changed since a group's saved summary, it is shown without sending anything.
+  and the per-group photo switch. If nothing changed since a group's saved summary, it is shown without sending anything.
   “Очистить” removes one summary; ⚙ → “Удалить сохранённые данные” removes all of it.
 - No analytics, telemetry or third-party tracking.
 

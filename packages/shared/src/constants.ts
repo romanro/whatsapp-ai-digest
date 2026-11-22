@@ -27,7 +27,17 @@ export const LIMITS = {
   maxImages: 20,
   /** One compressed JPEG as a data URL (~500 KB of image). */
   maxImageDataUrlChars: 700_000,
+  /** Documents (PDF/DOCX) the user added, per request. */
+  maxDocuments: 5,
+  /** Text of one document; longer documents are cut (≈ 25–30 pages) — the free Groq tier can't digest more anyway. */
+  maxDocumentChars: 60_000,
+  maxDocumentNameChars: 200,
+  /** Scanned PDFs (no text layer): first pages sent as images. */
+  maxDocumentPageImages: 3,
 } as const;
+
+/** Documents up to this length also get a full Russian translation (longer ones: summary and key points only). */
+export const DOCUMENT_TRANSLATE_MAX_CHARS = 8_000;
 
 export const DEFAULT_MAX_IMAGES = 10;
 /** Longest side of a photo sent for analysis; enough to read a textbook page, small enough for rate limits. */

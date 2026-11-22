@@ -45,6 +45,11 @@ export const SELECTORS = {
    * Their date is taken from neighbouring labelled messages.
    */
   author: ['[data-testid="author"]'],
+  /**
+   * Document card (PDF/DOCX…) inside a message bubble. NOT verified live yet: matched by these fallbacks and, failing
+   * that, by a leaf element whose whole text is a file name with a document extension (see DOCUMENT_NAME_RE).
+   */
+  documentCard: ['[data-testid="document-thumb"]', '[data-testid="media-document"]', '[data-testid*="document"]'],
   msgMeta: ['[data-testid="msg-meta"]'],
   /** Quoted (replied-to) message block — its text must not be attributed to the reply. */
   quotedMessage: ['[data-testid="quoted-message"]', '[aria-label="Quoted message"]', '[aria-label*="uoted"]'],
@@ -63,6 +68,9 @@ export const GROUP_ID_MARKER = "@g.us";
  * - a private chat can't have more than 2 distinct senders.
  */
 export const GROUP_MIN_SUBTITLE_COMMAS = 2;
+
+/** A document file name as shown on its card. */
+export const DOCUMENT_NAME_RE = /^[^\n/\\]{1,200}\.(pdf|docx?|xlsx?|pptx?|txt|rtf|odt)$/i;
 export const GROUP_MIN_DISTINCT_SENDERS = 3;
 
 /** Text of "read more" buttons in supported UI languages (fallback when no selector matches). */

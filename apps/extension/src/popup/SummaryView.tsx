@@ -38,6 +38,34 @@ const SECTION_ICONS: Record<SectionKey, string> = {
   other: "📌",
 };
 
+type SourceDocument = SourceRef["documents"][number];
+
+/** A document attached to the source message: digest, key points and (for short documents) the full translation. */
+function DocumentDigestView({ doc }: { doc: SourceDocument }) {
+  return (
+    <div className="source-document">
+      <span className="source-label">
+        📄 {doc.name}
+        {doc.pages ? ` · ${doc.pages} стр.` : ""}
+      </span>
+      <p>{doc.summary}</p>
+      {doc.keyPoints.length > 0 && (
+        <ul>
+          {doc.keyPoints.map((p, i) => (
+            <li key={i}>{p}</li>
+          ))}
+        </ul>
+      )}
+      {doc.translation && (
+        <details>
+          <summary>Перевод документа целиком</summary>
+          <p className="document-translation">{doc.translation}</p>
+        </details>
+      )}
+    </div>
+  );
+}
+
 /** Each source can be expanded to show the full Russian translation and the original message. */
 function Sources({ sources }: { sources: SourceRef[] }) {
   const photos = useContext(PhotosContext);
@@ -45,6 +73,8 @@ function Sources({ sources }: { sources: SourceRef[] }) {
     <div className="sources">
       {sources.map((s) => {
         const own = photos[s.id] ?? [];
+        // Summaries saved before documents were supported have no `documents`.
+        const docs = s.documents ?? [];
         return (
           // Messages with a photo (e.g. homework) start expanded: photo + translation side by side with the item.
           <details key={s.id} className="source" open={own.length > 0}>
@@ -53,6 +83,7 @@ function Sources({ sources }: { sources: SourceRef[] }) {
                 {formatWallTime(s.timestamp)}
                 {s.sender ? ` · ${s.sender}` : ""}
                 {own.length > 0 ? ` · 📷 ${own.length}` : ""}
+                {docs.length > 0 ? ` · 📄 ${docs.length}` : ""}
               </span>
             </summary>
             <div className="source-body">
@@ -63,6 +94,9 @@ function Sources({ sources }: { sources: SourceRef[] }) {
                   ))}
                 </div>
               )}
+              {docs.map((d, i) => (
+                <DocumentDigestView key={i} doc={d} />
+              ))}
               {s.translation && (
                 <div className="source-translation">
                   <span className="source-label">Перевод</span>

@@ -5,11 +5,14 @@ import {
   type SummarizeResponse,
 } from "@wad/shared";
 import {
+  documentHashes,
   fingerprint,
   imageHashes,
   loadSavedSummary,
   saveSummary,
+  storeDigests,
   storeReadings,
+  withCachedDigests,
   withCachedReadings,
   type KV,
 } from "./cache.ts";
@@ -28,6 +31,9 @@ export interface Job {
   photos: number;
   /** Photos whose earlier reading was reused instead of sending them to the AI again. */
   photosCached?: number;
+  documents?: number;
+  /** Documents whose earlier digest was reused. */
+  documentsCached?: number;
   /** Nothing changed since the saved summary of this group — it was shown without calling the AI. */
   reused?: boolean;
   error?: string;
@@ -145,7 +151,8 @@ export class JobRunner {
     this.controller = controller;
     const { cache } = this.deps;
     const hashes = await imageHashes(request);
-    const print = await fingerprint(request, hashes);
+    const docHashes = await documentHashes(request);
+    const print = await fingerprint(request, hashes, docHashes);
 
     // Same messages and photos as the saved summary of this group → show it, nothing is sent.
     const saved = cache ? await loadSavedSummary(cache, request.groupName).catch(() => null) : null;
@@ -157,10 +164,16 @@ export class JobRunner {
       return { ok: true, job: reusedJob, done: Promise.resolve() };
     }
 
-    const { request: toSend, reused } = cache
+    const withPhotos = cache
       ? await withCachedReadings(cache, request, hashes).catch(() => ({ request, reused: 0 }))
       : { request, reused: 0 };
-    job.photosCached = reused;
+    const withDocs = cache
+      ? await withCachedDigests(cache, withPhotos.request, docHashes).catch(() => ({ request: withPhotos.request, reused: 0 }))
+      : { request: withPhotos.request, reused: 0 };
+    const toSend = withDocs.request;
+    job.photosCached = withPhotos.reused;
+    job.documents = request.documents.length;
+    job.documentsCached = withDocs.reused;
     await this.deps.remove(PHOTOS_KEY);
     await this.deps.set({ [JOB_KEY]: job });
     this.deps.badge("running");
@@ -179,6 +192,7 @@ export class JobRunner {
         if (cache) {
           // Caching is best-effort: a full or failing store must not turn a finished summary into an error.
           await storeReadings(cache, result, hashes, this.deps.now()).catch(() => undefined);
+          await storeDigests(cache, result, docHashes, this.deps.now()).catch(() => undefined);
           await saveSummary(cache, { result, photos, fingerprint: print, savedAt: this.deps.now() }).catch(() => undefined);
         }
       } catch (err) {

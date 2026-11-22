@@ -218,3 +218,26 @@ describe("extractRenderedMessages", () => {
     expect(document.body.innerHTML).toBe(before);
   });
 });
+
+describe("documents", () => {
+  it("finds document cards (captionless and with a caption) but not file names mentioned in text", () => {
+    buildDoc(document, {
+      rows: [
+        row({ id: "E1", label: "[09:00, 21/11/2026] Ganenet: ", text: "Отчёт.pdf пришлю позже" }),
+        row({ id: "E2", label: "[09:05, 21/11/2026] Ganenet: ", doc: "Расписание.pdf", text: "Новое расписание" }),
+        row({ id: "E3", bare: { meta: "09:06", author: "Ganenet", doc: "שיעור בישול.docx" } }),
+        row({ id: "E4", label: "[09:10, 21/11/2026] Мама Ани: ", text: "Спасибо" }),
+      ],
+    });
+    const { result: r } = extractWithImages(document, "DMY", new Date(2026, 10, 21, 20, 0));
+    if (!r.ok) throw new Error(r.message);
+    expect(r.messages.map((m) => [m.text, m.documents ?? []])).toEqual([
+      ["Отчёт.pdf пришлю позже", []],
+      ["Новое расписание", ["Расписание.pdf"]],
+      ["", ["שיעור בישול.docx"]],
+      ["Спасибо", []],
+    ]);
+    expect(r.messages[2]).toMatchObject({ sender: "Ganenet", timestamp: "2026-11-21T09:06:00+02:00" });
+    expect(r.stats).toMatchObject({ documents: 2, photoOnly: 0, otherMedia: 0 });
+  });
+});

@@ -4,6 +4,11 @@ import {
   MAX_SAVED_SUMMARIES,
   clearAllSaved,
   deleteSavedSummary,
+  documentHashes,
+  fingerprint,
+  imageHashes,
+  storeDigests,
+  withCachedDigests,
   loadGroupPrefs,
   loadSavedSummary,
   saveGroupPrefs,
@@ -36,6 +41,7 @@ function makeRequest(text = "Что принести на урок"): SummarizeR
       { id: "p1", sender: "Мама Ани", timestamp: "2026-11-21T18:07:00+02:00", text: "" },
     ],
     images: [{ messageId: "p1", dataUrl: PHOTO }],
+    documents: [],
   };
 }
 
@@ -52,6 +58,10 @@ function makeResult(request: SummarizeRequest, readings: { index: number; text: 
       imagesFailed: 0,
       imagesCached: 0,
       imageReadings: readings,
+      documentsAnalyzed: 0,
+      documentsCached: 0,
+      documentsFailed: 0,
+      documentDigests: [],
       visionModel: "v",
       generatedAt: "2026-11-21T18:10:00.000Z",
     },
@@ -89,11 +99,11 @@ function setup() {
   return { runner, run, sent, session, cache };
 }
 
-describe("per-group checkboxes", () => {
+describe("per-group photo switch", () => {
   it("are remembered for the group they were set in only", async () => {
     const kv = memoryKV();
-    await saveGroupPrefs(kv, "Группа А", { permission: true, upload: true, images: true });
-    expect(await loadGroupPrefs(kv, "Группа А")).toEqual({ permission: true, upload: true, images: true });
+    await saveGroupPrefs(kv, "Группа А", { images: true });
+    expect(await loadGroupPrefs(kv, "Группа А")).toEqual({ images: true });
     expect(await loadGroupPrefs(kv, "Группа Б")).toBeNull();
     // Group names are not used as storage keys.
     expect(JSON.stringify([...kv.data.entries()])).not.toContain("Группа");
@@ -134,8 +144,31 @@ describe("summary jobs with the cache", () => {
     expect(await loadSavedSummary(kv, `Группа ${MAX_SAVED_SUMMARIES}`)).not.toBeNull();
     await deleteSavedSummary(kv, `Группа ${MAX_SAVED_SUMMARIES}`);
     expect(await loadSavedSummary(kv, `Группа ${MAX_SAVED_SUMMARIES}`)).toBeNull();
-    await saveGroupPrefs(kv, "Группа 1", { permission: true, upload: true, images: false });
+    await saveGroupPrefs(kv, "Группа 1", { images: false });
     await clearAllSaved(kv);
     expect(kv.data.size).toBe(0);
+  });
+});
+
+describe("document digests cache", () => {
+  it("sends a document digested before as its digest, and the fingerprint changes with the document", async () => {
+    const kv = memoryKV();
+    const req = { ...makeRequest(), documents: [{ messageId: "t1", name: "a.pdf", kind: "pdf" as const, pages: 1, text: "מה עליי להביא" }] };
+    const hashes = await documentHashes(req);
+    const result = makeResult(req, []);
+    result.meta.documentDigests = [{ index: 0, summary: "Список вещей.", keyPoints: ["Ложка"], translation: null }];
+    await storeDigests(kv, result, hashes, 1);
+    const { request, reused } = await withCachedDigests(kv, req, hashes);
+    expect(reused).toBe(1);
+    expect(request.documents[0]).toEqual({
+      messageId: "t1",
+      name: "a.pdf",
+      kind: "pdf",
+      pages: 1,
+      digest: { summary: "Список вещей.", keyPoints: ["Ложка"], translation: null },
+    });
+    const other = { ...req, documents: [{ ...req.documents[0]!, text: "другой текст" }] };
+    const img = await imageHashes(req);
+    expect(await fingerprint(req, img, hashes)).not.toBe(await fingerprint(other, img, await documentHashes(other)));
   });
 });

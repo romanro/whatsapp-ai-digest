@@ -21,6 +21,7 @@ describe("prepareMessages", () => {
       sender: "Ganenet",
       text: "Zoo trip moved to Monday 24.11",
       translation: null,
+      documents: [],
     });
   });
 });

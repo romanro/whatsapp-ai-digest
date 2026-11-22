@@ -21,6 +21,7 @@ export function makeRequest(overrides: Partial<SummarizeRequest> = {}): Summariz
       { id: "a4", sender: "Ganenet", timestamp: "2026-11-20T12:00:00+02:00", text: "Zoo trip moved to Monday 24.11" },
     ],
     images: [],
+    documents: [],
     ...overrides,
   };
 }

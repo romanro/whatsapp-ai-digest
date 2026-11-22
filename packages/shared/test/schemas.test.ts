@@ -106,7 +106,7 @@ describe("AiSummarySchema (AI response validation)", () => {
 
 describe("summaryToPlainText", () => {
   it("renders a Russian plain-text summary with source times and warnings", () => {
-    const src = [{ id: "a", timestamp: "2026-11-20T12:00:00+02:00", sender: "Ganenet", text: "Zoo trip moved", translation: "Поездку перенесли" }];
+    const src = [{ id: "a", timestamp: "2026-11-20T12:00:00+02:00", sender: "Ganenet", text: "Zoo trip moved", translation: "Поездку перенесли", documents: [] }];
     const enriched = {
       overview: aiOk.overview,
       announcements: [],
