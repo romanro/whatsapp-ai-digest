@@ -12,6 +12,11 @@ export interface FixtureMsg {
   readMore?: boolean;
   /** A photo in the bubble: loaded (blob:) or still a blurred placeholder (data:). */
   photo?: "loaded" | "notLoaded";
+  /**
+   * Captionless photo in the live markup (seen 2026-11-22): no data-pre-plain-text label, only an optional
+   * author element and the bubble clock in msg-meta.
+   */
+  bare?: { meta: string; author?: string; loaded?: boolean };
 }
 
 const LEGACY_GROUP = "120363000000000001@g.us";
@@ -29,12 +34,19 @@ export function row(m: FixtureMsg, opts: { legacyJid?: string } = {}): string {
       }" /></div>`
     : "";
   const textSpan = m.html ?? m.text ? `<span dir="auto" class="selectable-text copyable-text">${m.html ?? m.text}</span>` : "";
-  const body =
-    m.label === undefined
+  const bare = m.bare
+    ? `${m.bare.author ? `<div><span data-testid="author" role="button" aria-label="Maybe ${m.bare.author}">${m.bare.author}</span></div>` : ""}` +
+      `<div data-testid="image-thumb" role="button" aria-label="Open picture"><div data-testid="media-url-provider">` +
+      `<div><img src="data:image/jpeg;base64,/9j/AA=="></div>` +
+      `${m.bare.loaded === false ? "" : `<div><img src="blob:https://web.whatsapp.com/${m.id}"></div>`}</div></div>` +
+      `<div><div data-testid="msg-meta"><span><span>${m.bare.meta}</span></span></div></div>`
+    : "";
+  const body = bare ||
+    (m.label === undefined
       ? `<div class="system-notice">—</div>`
       : `<div class="copyable-text" data-pre-plain-text="${m.label}">${quote}${photo}${textSpan}${
           m.readMore ? '<div role="button">Read more</div>' : ""
-        }</div>`;
+        }</div>`);
   return `<div role="row"><div data-testid="conv-msg-${hexId}" data-id="${dataId}"><div class="focusable-list-item"><div data-testid="msg-container">${body}</div></div></div></div>`;
 }
 

@@ -71,7 +71,12 @@ export function preparePayload(
   if (stats.truncated > 0) {
     coverage.warnings.push(`${stats.truncated} длинных сообщ. показаны WhatsApp не полностью («Читать далее») — в сводку попал только видимый текст.`);
   }
-  const skippedMedia = stats.otherMedia + (opts.includeImages ? 0 : stats.photoOnly);
+  if (opts.includeImages && stats.photoDateUncertain > 0) {
+    coverage.warnings.push(
+      `У ${stats.photoDateUncertain} фото без подписи дата определена по соседним сообщениям и может быть неточной.`,
+    );
+  }
+  const skippedMedia =stats.otherMedia + (opts.includeImages ? 0 : stats.photoOnly);
   if (skippedMedia > 0) {
     coverage.warnings.push(
       opts.includeImages

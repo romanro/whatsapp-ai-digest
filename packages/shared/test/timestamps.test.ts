@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatWallTime, inferDateOrder, labelToDate, parseLabel, promptTime, toLocalIso, weekdayRu } from "../src/timestamps.ts";
+import { dateFromNeighbours, formatWallTime, inferDateOrder, labelToDate, parseClock, parseLabel, promptTime, toLocalIso, weekdayRu } from "../src/timestamps.ts";
 
 describe("parseLabel", () => {
   it("parses 24h DMY labels with Russian sender", () => {
@@ -68,5 +68,40 @@ describe("weekdays", () => {
     expect(weekdayRu("2026-11-23T08:30:00+02:00")).toBe("пн");
     expect(promptTime("2026-11-20T14:04:00+02:00")).toBe("2026-11-20 (пт) 14:04");
     expect(weekdayRu("garbage")).toBeNull();
+  });
+});
+
+describe("parseClock", () => {
+  it("reads the bubble clock in 24h and 12h form, ignoring extra words and bidi marks", () => {
+    expect(parseClock("18:07")).toEqual({ hour: 18, minute: 7 });
+    expect(parseClock("‏6:07 PM")).toEqual({ hour: 18, minute: 7 });
+    expect(parseClock("Edited 09:30")).toEqual({ hour: 9, minute: 30 });
+    expect(parseClock("")).toBeNull();
+    expect(parseClock("25:00")).toBeNull();
+  });
+});
+
+describe("dateFromNeighbours", () => {
+  const d = (day: number, h: number, m = 0) => new Date(2026, 10, day, h, m);
+  const now = d(21, 20);
+  const clock = { hour: 18, minute: 7 };
+
+  it("uses the neighbours' day when it is the only one that fits", () => {
+    expect(dateFromNeighbours(clock, d(21, 18, 7), d(21, 19), now)).toEqual({ date: d(21, 18, 7), certain: true });
+    // Day boundary between neighbours: 18:07 only fits the previous day.
+    expect(dateFromNeighbours(clock, d(20, 17), d(21, 9), now)).toEqual({ date: d(20, 18, 7), certain: true });
+    // Newest message, previous one today → certain.
+    expect(dateFromNeighbours(clock, d(21, 10), null, now)).toEqual({ date: d(21, 18, 7), certain: true });
+  });
+
+  it("is uncertain when another day could also fit", () => {
+    expect(dateFromNeighbours(clock, d(20, 10), null, now)).toEqual({ date: d(20, 18, 7), certain: false });
+    expect(dateFromNeighbours(clock, d(17, 10), d(21, 9), now)?.certain).toBe(false);
+    expect(dateFromNeighbours(clock, null, d(21, 19), now)?.certain).toBe(false);
+  });
+
+  it("returns null when the neighbours don't allow the clock", () => {
+    expect(dateFromNeighbours({ hour: 12, minute: 0 }, d(20, 18), d(21, 9), now)).toBeNull();
+    expect(dateFromNeighbours(clock, null, null, now)).toBeNull();
   });
 });

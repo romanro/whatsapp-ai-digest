@@ -24,6 +24,7 @@ const extraction = (messages: RawMessage[], stats: Partial<ExtractionResult["sta
     imagesLoaded: 0,
     imagesNotLoaded: 0,
     truncated: 0,
+    photoDateUncertain: 0,
     duplicatesRemoved: 0,
     dateOrder: "DMY",
     dateOrderAssumed: false,

@@ -11,6 +11,7 @@
  *    (participant list) and the number of distinct senders instead;
  *  - "[HH:MM, D/M/YYYY] Sender: " labels on div.copyable-text[data-pre-plain-text] inside [data-testid="msg-container"];
  *  - header: [data-testid="conversation-info-header-chat-title"], [data-testid="chat-subtitle"].
+ *  - captionless photos (2026-11-22): no label at all — see `author` / `msgMeta` below.
  * Text extraction, quotes, "read more" and the scroll button are still NOT verified live.
  * If extraction breaks, update this file only.
  */
@@ -38,6 +39,13 @@ export const SELECTORS = {
   messageText: ["span.selectable-text", '[data-testid="selectable-text"]', "span[dir='auto']"],
   /** Photo inside a message bubble (seen live 2026-11-20: role="button" wrapper with this testid). */
   imageThumb: ['[data-testid="image-thumb"]'],
+  /**
+   * Captionless photos have NO data-pre-plain-text label (seen live 2026-11-22): only the sender name
+   * (first "author" element, absent on consecutive messages of the same sender) and the time in msg-meta.
+   * Their date is taken from neighbouring labelled messages.
+   */
+  author: ['[data-testid="author"]'],
+  msgMeta: ['[data-testid="msg-meta"]'],
   /** Quoted (replied-to) message block — its text must not be attributed to the reply. */
   quotedMessage: ['[data-testid="quoted-message"]', '[aria-label="Quoted message"]', '[aria-label*="uoted"]'],
   /** "Read more" button on truncated long messages. */

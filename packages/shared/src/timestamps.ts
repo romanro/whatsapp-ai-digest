@@ -43,6 +43,47 @@ export function parseLabel(label: string): ParsedLabel | null {
   };
 }
 
+/** Parses a bubble clock like "18:07", "6:07 PM" or "18:07 edited" (msg-meta). */
+export function parseClock(text: string): { hour: number; minute: number } | null {
+  const m = /(\d{1,2})[:.](\d{2})(?:\s*([AaPp])\.?\s*[Mm]\.?)?/.exec(text.replace(/[‎‏‪-‮⁦-⁩]/g, ""));
+  if (!m) return null;
+  let hour = Number(m[1]);
+  const minute = Number(m[2]);
+  const ampm = m[3]?.toLowerCase();
+  if (ampm) {
+    if (hour < 1 || hour > 12) return null;
+    if (ampm === "p" && hour !== 12) hour += 12;
+    if (ampm === "a" && hour === 12) hour = 0;
+  }
+  return hour > 23 || minute > 59 ? null : { hour, minute };
+}
+
+/**
+ * Dates a message that only shows a clock (captionless photo) from the nearest labelled messages before/after it
+ * in the chat. Returns null when the neighbours don't pin down a single day. `certain` is false when only one
+ * neighbour exists and the day could also be a later/earlier one (e.g. the photo is the newest message and the
+ * previous labelled message is from an earlier day than `now`).
+ */
+export function dateFromNeighbours(
+  clock: { hour: number; minute: number },
+  prev: Date | null,
+  next: Date | null,
+  now: Date,
+): { date: Date; certain: boolean } | null {
+  const at = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), clock.hour, clock.minute, 0, 0);
+  const fits = (c: Date) => (!prev || c >= prev) && (!next || c <= next);
+  const candidates = [prev, next].flatMap((d) => (d ? [at(d)] : [])).filter(fits);
+  const unique = [...new Map(candidates.map((c) => [c.getTime(), c])).values()];
+  if (unique.length !== 1) return null;
+  const date = unique[0] as Date;
+  // Only the neighbours' own days are candidates, so the answer is certain when no other day lies between
+  // the bounds (the photo is between prev and `now` for the newest message).
+  const day = (d: Date) => Math.round(new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 86_400_000);
+  const upper = next ?? (prev ? now : null);
+  const certain = !!prev && !!upper && day(upper) - day(prev) <= 1 && (next !== null || day(date) === day(now));
+  return { date, certain };
+}
+
 /**
  * Infers date order from a set of labels. Returns null if the data is ambiguous
  * (every day ≤ 12), in which case the caller must use the configured fallback.

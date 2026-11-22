@@ -109,6 +109,51 @@ describe("extractRenderedMessages", () => {
     expect(ref).not.toMatch(/blob:|3EB0/);
   });
 
+  it("keeps captionless photos that have no label (live markup), dating them from neighbouring messages", () => {
+    buildDoc(document, {
+      rows: [
+        row({ id: "B1", label: "[16:33, 15/11/2026] Ganenet: ", text: "Старое" }),
+        row({ id: "B2", label: "[18:07, 21/11/2026] Мама Ани: ", text: "Что принести на урок" }),
+        row({ id: "B3", bare: { meta: "18:07", author: "Мама Ани" } }),
+        row({ id: "B4", bare: { meta: "6:09 PM" } }), // same sender again: WhatsApp shows no author
+        row({ id: "B5", bare: { meta: "18:10", author: "Ganenet", loaded: false } }),
+      ],
+    });
+    const { result: r, images } = extractWithImages(document, "DMY", new Date(2026, 10, 21, 20, 0));
+    if (!r.ok) throw new Error(r.message);
+    expect(r.messages.slice(2).map((m) => [m.sender, m.timestamp, m.text, m.imageRefs?.length])).toEqual([
+      ["Мама Ани", "2026-11-21T18:07:00+02:00", "", 1],
+      ["Мама Ани", "2026-11-21T18:09:00+02:00", "", 1],
+    ]);
+    expect(images.size).toBe(2);
+    expect(r.stats).toMatchObject({ photoOnly: 2, imagesLoaded: 2, imagesNotLoaded: 1, otherMedia: 1, untimed: 0, photoDateUncertain: 0 });
+  });
+
+  it("flags a photo date as uncertain when another day was possible, and never dates a contradictory one", () => {
+    buildDoc(document, {
+      rows: [
+        row({ id: "C1", label: "[18:00, 20/11/2026] Мама Ани: ", text: "Вчера" }),
+        row({ id: "C2", bare: { meta: "19:00", author: "Ganenet" } }),
+      ],
+    });
+    const { result: r } = extractWithImages(document, "DMY", new Date(2026, 10, 21, 20, 0));
+    if (!r.ok) throw new Error(r.message);
+    expect(r.messages[1]?.timestamp).toBe("2026-11-20T19:00:00+02:00");
+    expect(r.stats.photoDateUncertain).toBe(1);
+
+    buildDoc(document, {
+      rows: [
+        row({ id: "D1", label: "[18:00, 20/11/2026] Мама Ани: ", text: "a" }),
+        row({ id: "D2", bare: { meta: "12:00", author: "Ganenet" } }),
+        row({ id: "D3", label: "[09:00, 21/11/2026] Мама Ани: ", text: "b" }),
+      ],
+    });
+    const { result: r2 } = extractWithImages(document, "DMY", new Date(2026, 10, 21, 20, 0));
+    if (!r2.ok) throw new Error(r2.message);
+    expect(r2.messages[1]?.timestamp).toBeNull();
+    expect(r2.stats.untimed).toBe(1);
+  });
+
   it("excludes quoted text from the reply", () => {
     buildDoc(document, { rows: standard });
     const r = extractRenderedMessages(document, "DMY");

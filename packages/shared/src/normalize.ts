@@ -33,7 +33,7 @@ export interface RawMessage {
   /** Stable key for the DOM element (already hashed — never contains phone numbers). */
   key: string;
   sender: string | null;
-  /** Local ISO timestamp, or null when it could not be determined (never guessed). */
+  /** Local ISO timestamp, or null when it could not be determined. Captionless photos are dated from neighbouring labelled messages. */
   timestamp: string | null;
   /** Caption / message text; may be empty for photo messages. */
   text: string;

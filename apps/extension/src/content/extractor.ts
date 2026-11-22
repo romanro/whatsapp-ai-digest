@@ -1,5 +1,5 @@
 import { dedupeMessages, normalizeSender, normalizeText, opaqueKey, type RawMessage } from "@wad/shared";
-import { inferDateOrder, labelToDate, parseLabel, toLocalIso, type DateOrder, type ParsedLabel } from "@wad/shared";
+import { dateFromNeighbours, inferDateOrder, labelToDate, parseClock, parseLabel, toLocalIso, type DateOrder, type ParsedLabel } from "@wad/shared";
 import {
   GROUP_ID_MARKER,
   GROUP_MIN_DISTINCT_SENDERS,
@@ -36,6 +36,8 @@ export interface ExtractionResult {
     /** Photos shown only as a blurred placeholder (not downloaded by WhatsApp). */
     imagesNotLoaded: number;
     truncated: number;
+    /** Captionless photos dated from neighbouring messages where another day was also possible. */
+    photoDateUncertain: number;
     duplicatesRemoved: number;
     dateOrder: DateOrder;
     dateOrderAssumed: boolean;
@@ -153,6 +155,7 @@ function rowImages(row: Element): { loaded: HTMLImageElement[]; notLoaded: numbe
 export function extractWithImages(
   doc: Document,
   dateOrderFallback: DateOrder,
+  now: Date = new Date(),
 ): { result: ExtractionResult | ExtractionError; images: Map<string, HTMLImageElement> } {
   const images = new Map<string, HTMLImageElement>();
   const fail = (result: ExtractionError) => ({ result, images });
@@ -168,7 +171,14 @@ export function extractWithImages(
   }
 
   const rows = queryAll(main, SELECTORS.messageRow);
-  type Pending = { key: string; label: ParsedLabel | null; text: string; imageRefs: string[] };
+  type Pending = {
+    key: string;
+    label: ParsedLabel | null;
+    /** Captionless photo: no label, only the bubble clock and (maybe) the author name. */
+    photo?: { clock: { hour: number; minute: number } | null; sender: string | null };
+    text: string;
+    imageRefs: string[];
+  };
   const pending: Pending[] = [];
   let noLabel = 0;
   let photoOnly = 0;
@@ -185,8 +195,30 @@ export function extractWithImages(
 
     const labelEl = queryAll(row, SELECTORS.prePlainText).find((el) => !isInsideQuote(el, row));
     if (!labelEl) {
-      // System notices, some media types, deleted messages, etc.
-      noLabel++;
+      // Captionless photos carry no label; everything else here is a system notice, other media, deleted message…
+      const imgs = rowImages(row);
+      if (!imgs.loaded.length && !imgs.notLoaded) {
+        noLabel++;
+        continue;
+      }
+      imagesNotLoaded += imgs.notLoaded;
+      if (!imgs.loaded.length) {
+        otherMedia++;
+        continue;
+      }
+      const key = opaqueKey(dataId);
+      const imageRefs = imgs.loaded.map((img, i) => {
+        const ref = `${key}:${i}`;
+        images.set(ref, img);
+        return ref;
+      });
+      imagesLoaded += imageRefs.length;
+      photoOnly++;
+      const author = queryAll(row, SELECTORS.author).find((el) => !isInsideQuote(el, row));
+      const clock = parseClock(queryFirst(row, SELECTORS.msgMeta)?.textContent ?? "");
+      // No author element = consecutive message of the previous sender (WhatsApp shows the name once).
+      const sender = author ? normalizeSender(author.textContent) : (pending.at(-1)?.label?.sender ?? pending.at(-1)?.photo?.sender ?? null);
+      pending.push({ key, label: null, photo: { clock, sender }, text: "", imageRefs });
       continue;
     }
     const textEl = queryAll(labelEl, SELECTORS.messageText).find((el) => !isInsideQuote(el, row));
@@ -214,12 +246,23 @@ export function extractWithImages(
   const dateOrder = inferred ?? dateOrderFallback;
 
   let untimed = 0;
-  const messages: RawMessage[] = pending.map((x) => {
-    const date = x.label ? labelToDate(x.label, dateOrder) : null;
+  let photoDateUncertain = 0;
+  const labelled = pending.map((x) => (x.label ? labelToDate(x.label, dateOrder) : null));
+  const nearest = (from: number, step: 1 | -1): Date | null => {
+    for (let j = from + step; j >= 0 && j < labelled.length; j += step) if (labelled[j]) return labelled[j] ?? null;
+    return null;
+  };
+  const messages: RawMessage[] = pending.map((x, i) => {
+    let date = labelled[i] ?? null;
+    if (!x.label && x.photo?.clock) {
+      const r = dateFromNeighbours(x.photo.clock, nearest(i, -1), nearest(i, 1), now);
+      if (r && !r.certain) photoDateUncertain++;
+      date = r?.date ?? null;
+    }
     if (!date) untimed++;
     return {
       key: x.key,
-      sender: normalizeSender(x.label?.sender),
+      sender: normalizeSender(x.label ? x.label.sender : x.photo?.sender),
       timestamp: date ? toLocalIso(date) : null,
       text: x.text,
       ...(x.imageRefs.length ? { imageRefs: x.imageRefs } : {}),
@@ -245,6 +288,7 @@ export function extractWithImages(
       imagesLoaded,
       imagesNotLoaded,
       truncated,
+      photoDateUncertain,
       duplicatesRemoved: messages.length - deduped.length,
       dateOrder,
       dateOrderAssumed: inferred === null && labels.length > 0,
