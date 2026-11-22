@@ -132,15 +132,16 @@ var
   Key: String;
 begin
   Result := True;
-  if CurPageID <> KeyPage.ID then Exit;
+  { Inno calls this for every page even in silent mode; plain MsgBox would then block forever. }
+  if WizardSilent or (CurPageID <> KeyPage.ID) then Exit;
   Key := Trim(KeyPage.Values[0]);
   KeyPage.Values[0] := Key;
   if Key = '' then
-    Result := MsgBox('Без ключа сводки работать не будут. Продолжить без ключа и добавить его позже?',
-      mbConfirmation, MB_YESNO) = IDYES
+    Result := SuppressibleMsgBox('Без ключа сводки работать не будут. Продолжить без ключа и добавить его позже?',
+      mbConfirmation, MB_YESNO, IDYES) = IDYES
   else if Pos('gsk_', Key) <> 1 then
-    Result := MsgBox('Ключи Groq обычно начинаются с «gsk_». Всё равно использовать этот ключ?',
-      mbConfirmation, MB_YESNO) = IDYES;
+    Result := SuppressibleMsgBox('Ключи Groq обычно начинаются с «gsk_». Всё равно использовать этот ключ?',
+      mbConfirmation, MB_YESNO, IDYES) = IDYES;
 end;
 
 { Writes the key into %LOCALAPPDATA%\WhatsAppAIDigest\.env, creating it from .env.example; other settings are kept. }

@@ -12,6 +12,7 @@ permissions:
 jobs:
   installer:
     runs-on: windows-latest
+    timeout-minutes: 30
     defaults:
       run:
         shell: pwsh
@@ -55,15 +56,20 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       - name: Smoke test (silent install, start the installed server, uninstall)
+        timeout-minutes: 8
         run: |
           $setup = "installer/output/WhatsAppAIDigestSetup.exe"
-          Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/GROQKEY=gsk_test", "/TASKS=" -Wait
+          Write-Host "Installing silently…"
+          $p = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/GROQKEY=gsk_test", "/TASKS=", "/LOG=$env:RUNNER_TEMP\setup.log" -PassThru
+          if (-not $p.WaitForExit(180000)) { Get-Content "$env:RUNNER_TEMP\setup.log" -Tail 30; throw "installer did not finish in 3 minutes" }
+          Write-Host "Installer exit code: $($p.ExitCode)"
           $app = "$env:LOCALAPPDATA\Programs\WhatsAppAIDigest"
           $envFile = "$env:LOCALAPPDATA\WhatsAppAIDigest\.env"
           foreach ($f in "WhatsAppAIDigestTray.exe", "node\node.exe", "server\server.mjs", "extension\manifest.json") {
             if (-not (Test-Path "$app\$f")) { throw "missing $f" }
           }
           if (-not (Select-String -Path $envFile -Pattern "^GROQ_API_KEY=gsk_test$" -Quiet)) { throw "key not written to $envFile" }
+          Write-Host "Files and key OK; starting the installed server…"
           $env:WAD_ENV_FILE = $envFile
           $server = Start-Process "$app\node\node.exe" -ArgumentList "--use-system-ca", "server.mjs" -WorkingDirectory "$app\server" -PassThru -NoNewWindow
           $health = $null
@@ -74,7 +80,9 @@ jobs:
           Stop-Process $server -Force
           if (-not $health -or $health.status -ne "ok" -or -not $health.ai.configured) { throw "server health check failed: $($health | ConvertTo-Json -Depth 5)" }
           $health | ConvertTo-Json -Depth 5
-          Start-Process "$app\unins000.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES" -Wait
+          Write-Host "Uninstalling silently…"
+          $u = Start-Process "$app\unins000.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES" -PassThru
+          [void]$u.WaitForExit(120000)
           # The uninstaller re-launches itself from %TEMP%, so -Wait returns early: poll for the files to go.
           foreach ($i in 1..30) { if (-not (Test-Path "$app\server\server.mjs")) { break }; Start-Sleep 1 }
           if (Test-Path "$app\server\server.mjs") { throw "uninstall left files behind" }
