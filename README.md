@@ -236,7 +236,8 @@ keep data on your machine only.
 
 **What is done to protect it**
 
-- Nothing is read until you click, nothing is sent until you confirm; consent is required for every summary.
+- Nothing is read until you click, nothing is sent until you confirm: every summary shows what will be sent and needs
+  **Отправить в Groq**. The consent checkboxes are remembered per group.
 - Text only: media, voice notes and files are never downloaded or sent.
 - Before upload (in the browser, and again on the server): phone numbers, emails, card numbers, IBANs and URL query
   strings are removed; senders shown as phone numbers become “Участник N”. WhatsApp's internal ids (which contain phone
@@ -244,8 +245,11 @@ keep data on your machine only.
 - **This is basic redaction.** Names, children's names, addresses, health details and other free-form content can still
   be present in the text that is sent.
 - The server binds to `127.0.0.1` only, accepts the API only from the allow-listed extension, never logs message text,
-  headers or API keys, and stores nothing on disk. The last summary (and the photos it cites) is kept in Chrome session memory until the browser
-  closes or you click “Очистить”.
+  headers or API keys, and stores nothing on disk.
+- The extension keeps in the Chrome profile (`chrome.storage.local`, on disk): the last summary of each group (up to 20
+  groups, with the messages and photos it cites), the readings of analysed photos (so a photo is sent to Groq only once)
+  and the per-group checkboxes. If nothing changed since a group's saved summary, it is shown without sending anything.
+  “Очистить” removes one summary; ⚙ → “Удалить сохранённые данные” removes all of it.
 - No analytics, telemetry or third-party tracking.
 
 **Prompt-injection protection.** Messages are passed to the model as escaped JSON data inside a delimited block; the

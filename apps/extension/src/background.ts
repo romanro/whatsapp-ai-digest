@@ -4,6 +4,7 @@
  */
 import { SummarizeRequestSchema } from "@wad/shared";
 import { requestSummary } from "./lib/api.ts";
+import { chromeLocal } from "./lib/cache.ts";
 import { JOB_KEY, JobRunner, type BackgroundRequest, type BackgroundResponse, type BadgeState, type Job } from "./lib/jobs.ts";
 import { loadSettings } from "./lib/settings.ts";
 
@@ -31,6 +32,7 @@ const runner = new JobRunner({
   },
   now: () => Date.now(),
   newId: () => crypto.randomUUID(),
+  cache: chromeLocal,
 });
 
 const ready = runner.recoverOnStartup();

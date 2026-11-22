@@ -108,6 +108,7 @@ export function buildApp(config: AppConfig, provider: AiProvider): FastifyInstan
           batches: result.meta.batches,
           images: result.meta.imagesAnalyzed,
           imagesFailed: result.meta.imagesFailed,
+          imagesCached: result.meta.imagesCached,
           ms: Date.now() - started,
         },
         "summary generated",

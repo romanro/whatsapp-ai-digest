@@ -56,6 +56,10 @@ export interface ImageAnalysis {
   readings: Map<string, string[]>;
   analyzed: number;
   failed: number;
+  /** Photos that came with a cached reading instead of the image. */
+  cached: number;
+  /** Fresh readings by index in the request's images (returned so the extension can cache them). */
+  fresh: { index: number; text: string; description: string }[];
 }
 
 export function parseImageReading(text: string): { text: string; description: string } | null {
@@ -94,19 +98,33 @@ export async function analyzeImages(
   const sleep = opts.sleep ?? realSleep;
   let waitBudget = opts.visionWaitBudgetMs ?? 5 * 60_000;
   const readings = new Map<string, string[]>();
+  const fresh: ImageAnalysis["fresh"] = [];
   let analyzed = 0;
   let failed = 0;
-  if (!images.length) return { readings, analyzed, failed };
+  let cached = 0;
+  const add = (messageId: string, r: { text: string; description: string }) => {
+    const list = readings.get(messageId) ?? [];
+    list.push(formatReading(r));
+    readings.set(messageId, list);
+  };
+  for (const img of images) {
+    if (img.reading) {
+      add(img.messageId, img.reading);
+      cached++;
+    }
+  }
+  const toAnalyze = [...images.entries()].filter(([, img]) => img.dataUrl !== undefined);
+  if (!toAnalyze.length) return { readings, analyzed, failed, cached, fresh };
   if (!provider.visionModel) {
     opts.onImageError?.("vision_disabled");
-    return { readings, analyzed, failed: images.length };
+    return { readings, analyzed, failed: toAnalyze.length, cached, fresh };
   }
-  for (const [index, img] of images.entries()) {
+  for (const [n, [index, img]] of toAnalyze.entries()) {
     const msg = messages.get(img.messageId);
     const request = {
       system: VISION_SYSTEM,
       user: buildVisionUser({ caption: msg?.text ?? "", sender: msg?.sender ?? null, time: msg ? promptTime(msg.timestamp) : "" }),
-      imageDataUrl: img.dataUrl,
+      imageDataUrl: img.dataUrl as string,
       maxTokens: 2000,
     };
     let reading: { text: string; description: string } | null = null;
@@ -132,20 +150,19 @@ export async function analyzeImages(
       }
     }
     if (reading) {
-      const list = readings.get(img.messageId) ?? [];
-      list.push(formatReading(reading));
-      readings.set(img.messageId, list);
+      add(img.messageId, reading);
+      fresh.push({ index, text: reading.text, description: reading.description });
       analyzed++;
     } else {
       failed++;
     }
     // Rate limit budget exhausted or auth problems would hit every remaining photo too.
     if (fatal) {
-      failed += images.length - index - 1;
+      failed += toAnalyze.length - n - 1;
       break;
     }
   }
-  return { readings, analyzed, failed };
+  return { readings, analyzed, failed, cached, fresh };
 }
 
 /** Appends photo readings to their messages; drops captionless photo messages whose photo couldn't be read. */
@@ -439,6 +456,8 @@ export async function summarize(
       unknownSourceIdsDropped: unknownDropped,
       imagesAnalyzed: vision.analyzed,
       imagesFailed: vision.failed,
+      imagesCached: vision.cached,
+      imageReadings: vision.fresh,
       visionModel: req.images.length ? provider.visionModel : null,
       generatedAt: new Date().toISOString(),
     },

@@ -53,5 +53,5 @@ There is no TS compile step for the server or shared. The server runs TS directl
 ## Invariants to preserve
 
 - The extension is strictly read-only on WhatsApp Web. It never clicks, scrolls, sends or edits, and it never reads cookies or storage. It reads only the DOM that is currently rendered, and only after the user clicks.
-- Nothing is sent without explicit per-summary user confirmation. The redaction runs in the browser and again on the server.
-- The server binds to loopback only, stores nothing on disk and logs metadata only.
+- Nothing is sent without per-summary user confirmation (the review screen's send button; the consent checkboxes are remembered per group). The redaction runs in the browser and again on the server.
+- The server binds to loopback only, stores nothing on disk and logs metadata only. Persistence lives only in the extension (`src/lib/cache.ts`, `chrome.storage.local`): per-group saved summaries, photo readings by photo hash and checkbox state. `JobRunner` reuses a saved summary when the request fingerprint is unchanged and sends previously read photos as `{ reading }` instead of `{ dataUrl }`; the server returns fresh readings in `meta.imageReadings`. Extension and server must be updated together (the installer ships both).

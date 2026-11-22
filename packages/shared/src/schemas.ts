@@ -15,14 +15,32 @@ export const InputMessageSchema = z.object({
   text: z.string().max(LIMITS.maxMessageChars),
 });
 
-/** A photo the user explicitly selected for analysis, attached to an existing message. */
-export const InputImageSchema = z.object({
-  messageId: z.string().min(1).max(64),
-  dataUrl: z
-    .string()
-    .max(LIMITS.maxImageDataUrlChars)
-    .regex(/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/),
+/** What the vision model must return for one photo. */
+export const ImageReadingSchema = z.object({
+  /** Readable text on the photo, verbatim, original language(s). Empty if none. */
+  text: z.string().max(6000),
+  /** One short Russian sentence: what the photo shows. */
+  description: z.string().max(500),
 });
+export type ImageReading = z.infer<typeof ImageReadingSchema>;
+
+/**
+ * A photo the user explicitly selected for analysis, attached to an existing message. Either the photo itself, or —
+ * when the extension already has it from an earlier summary — the cached reading, so it isn't sent to the AI again.
+ */
+export const InputImageSchema = z
+  .object({
+    messageId: z.string().min(1).max(64),
+    dataUrl: z
+      .string()
+      .max(LIMITS.maxImageDataUrlChars)
+      .regex(/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/)
+      .optional(),
+    reading: ImageReadingSchema.optional(),
+  })
+  .refine((i) => (i.dataUrl === undefined) !== (i.reading === undefined), {
+    message: "An image needs exactly one of dataUrl or reading",
+  });
 export type InputImage = z.infer<typeof InputImageSchema>;
 export type InputMessage = z.infer<typeof InputMessageSchema>;
 
@@ -78,15 +96,6 @@ export const SummarizeRequestSchema = z
   });
 export type SummarizeRequest = z.infer<typeof SummarizeRequestSchema>;
 export type SummarizeRequestInput = z.input<typeof SummarizeRequestSchema>;
-
-/** What the vision model must return for one photo. */
-export const ImageReadingSchema = z.object({
-  /** Readable text on the photo, verbatim, original language(s). Empty if none. */
-  text: z.string().max(6000),
-  /** One short Russian sentence: what the photo shows. */
-  description: z.string().max(500),
-});
-export type ImageReading = z.infer<typeof ImageReadingSchema>;
 
 /* ------------------------------------------------------------------ */
 /* AI output schema — what the model must return (validated strictly). */
@@ -230,6 +239,10 @@ export const SummarizeResponseSchema = z.object({
     unknownSourceIdsDropped: z.number().int(),
     imagesAnalyzed: z.number().int().default(0),
     imagesFailed: z.number().int().default(0),
+    /** Photos whose cached reading was reused (not sent to the AI again). */
+    imagesCached: z.number().int().default(0),
+    /** Fresh readings, by index in request.images — the extension caches them for later summaries. */
+    imageReadings: z.array(ImageReadingSchema.extend({ index: z.number().int().min(0) })).default([]),
     visionModel: z.string().nullable().default(null),
     generatedAt: z.string(),
   }),
