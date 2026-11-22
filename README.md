@@ -15,6 +15,55 @@ Chrome popup (React) ──► content script (reads visible messages of the ope
 > WhatsApp Web structure and are covered by tests against a *synthetic* DOM. They have **not** been verified against the
 > live WhatsApp Web UI by the author. Follow [Manual testing](#manual-testing-of-the-whatsapp-integration) before relying on it.
 
+## Быстрый старт на Windows (по-русски)
+
+Всё делается в PowerShell, WSL не нужен. Подробности — в разделах 1–8 ниже.
+
+**1. Установи один раз**
+
+- [Node.js 22 LTS](https://nodejs.org/) или новее.
+- pnpm: `npm install -g pnpm`, или `corepack enable` в PowerShell, запущенном от администратора.
+- Git, если его ещё нет, и Google Chrome версии 116 или новее.
+
+**2. Скачай проект и укажи ключ Groq**
+
+```powershell
+git clone https://github.com/romanro/whatsapp-ai-digest.git
+cd whatsapp-ai-digest
+Copy-Item apps\server\.env.example apps\server\.env
+notepad apps\server\.env
+```
+
+В `.env` впиши `GROQ_API_KEY=gsk_...` (ключ берётся на <https://console.groq.com/keys>) и сохрани. Проверить, что ключ
+работает: `pnpm --filter @wad/server check-model`.
+
+**3. Собери проект и запусти сервер**
+
+```powershell
+pnpm install
+pnpm build     # собирает расширение в apps\extension\dist
+pnpm start     # сервер на http://127.0.0.1:3741, окно не закрывай
+```
+
+Чтобы не держать открытое окно PowerShell, можно собрать приложение для трея. Один раз выполни
+`winget install Microsoft.DotNet.SDK.9`, затем `pnpm tray:build` и запускай
+`apps\tray-windows\dist\WhatsAppAIDigestTray.exe`. Он запускает сервер в фоне, показывает его статус значком у часов и
+может стартовать вместе с Windows.
+
+**4. Загрузи расширение в Chrome**
+
+1. Открой `chrome://extensions` и включи «Режим разработчика» (справа сверху).
+2. Нажми «Загрузить распакованное расширение» и выбери папку `apps\extension\dist`.
+3. Закрепи значок через кнопку с пазлом.
+
+**5. Пользуйся**
+
+Открой <https://web.whatsapp.com/>, зайди в группу и прокрути чат вверх на нужный период, потом обратно вниз. Затем
+нажми значок расширения.
+
+**Обновление:** `git pull`, `pnpm install`, `pnpm build`. Затем ↻ у расширения в `chrome://extensions`, F5 на вкладке
+WhatsApp и перезапуск сервера (или «перезапустить» в меню трея).
+
 ## Project structure
 
 ```
