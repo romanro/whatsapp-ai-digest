@@ -8,7 +8,7 @@ using System.Text.RegularExpressions;
 namespace WadTray
 {
     /// <summary>
-    /// Runs `node --use-system-ca --import tsx src/index.ts` (system CA store: works behind TLS-inspecting corporate proxies) in apps/server as a single hidden process.
+    /// Runs the server (`node --use-system-ca …`, see <see cref="Layout"/>; system CA store: works behind TLS-inspecting corporate proxies) as a single hidden process.
     /// Output goes to %LOCALAPPDATA%\WhatsAppAIDigest\server.log (the server never logs message contents).
     /// </summary>
     internal sealed class ServerProcess : IDisposable
@@ -27,7 +27,7 @@ namespace WadTray
             get { lock (_lock) return _process != null && !_process.HasExited; }
         }
 
-        public void Start(string nodeExe, string serverDir)
+        public void Start(string nodeExe, Layout layout)
         {
             lock (_lock)
             {
@@ -39,9 +39,9 @@ namespace WadTray
                     new UTF8Encoding(false)) { AutoFlush = true };
                 _tail.Clear();
 
-                var psi = new ProcessStartInfo(nodeExe, "--use-system-ca --import tsx src/index.ts")
+                var psi = new ProcessStartInfo(nodeExe, layout.ServerArgs)
                 {
-                    WorkingDirectory = serverDir,
+                    WorkingDirectory = layout.ServerDir,
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardOutput = true,
@@ -50,6 +50,7 @@ namespace WadTray
                     StandardErrorEncoding = Encoding.UTF8,
                 };
                 psi.EnvironmentVariables["NO_COLOR"] = "1";
+                psi.EnvironmentVariables["WAD_ENV_FILE"] = layout.EnvFile;
 
                 var p = new Process { StartInfo = psi, EnableRaisingEvents = true };
                 p.OutputDataReceived += (s, e) => OnLine(e.Data);

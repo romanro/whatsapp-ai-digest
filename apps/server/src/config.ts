@@ -6,7 +6,8 @@ import { BACKEND_PORT } from "@wad/shared";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // Load apps/server/.env regardless of the current working directory (works from repo root on Windows too).
-loadDotenv({ path: path.resolve(here, "../.env"), quiet: true });
+// The Windows installer keeps settings outside the program folder and passes their path in WAD_ENV_FILE.
+loadDotenv({ path: process.env.WAD_ENV_FILE || path.resolve(here, "../.env"), quiet: true });
 
 const PROVIDER_PRESETS = {
   // qwen/qwen3.8-27b is Groq's only image-capable model as of 2026-11-20 (a *preview* model — may change).

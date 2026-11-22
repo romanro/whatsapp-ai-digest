@@ -15,9 +15,46 @@ Chrome popup (React) ──► content script (reads visible messages of the ope
 > WhatsApp Web structure and are covered by tests against a *synthetic* DOM. They have **not** been verified against the
 > live WhatsApp Web UI by the author. Follow [Manual testing](#manual-testing-of-the-whatsapp-integration) before relying on it.
 
-## Быстрый старт на Windows (по-русски)
+## Установка на Windows (по-русски)
 
-Всё делается в PowerShell, WSL не нужен. Подробности — в разделах 1–8 ниже.
+Нужны только Windows 10/11 и Google Chrome. Node.js, pnpm и Git не нужны: всё необходимое внутри установщика.
+
+**1. Получи ключ Groq.** Зайди на <https://console.groq.com/keys>, войди (можно через Google) и нажми
+**Create API Key**. Скопируй ключ: он начинается с `gsk_`.
+
+**2. Скачай и запусти установщик:**
+[WhatsAppAIDigestSetup.exe](https://github.com/romanro/whatsapp-ai-digest/releases/latest/download/WhatsAppAIDigestSetup.exe).
+
+- Установщик не подписан, поэтому Windows может показать «Windows защитил ваш компьютер». Нажми **Подробнее** →
+  **Выполнить в любом случае**.
+- Права администратора не нужны: программа ставится только для текущего пользователя.
+- На шаге **«Ключ Groq»** вставь ключ. Можно пропустить и добавить позже: меню значка в трее → «Настройки сервера (.env)».
+- Оставь галочку «Запускать при входе в Windows», чтобы сервер стартовал сам.
+
+**3. Подключи расширение в Chrome (один раз).** В конце установки откроются страница `chrome://extensions` и папка
+расширения.
+
+1. Включи **«Режим разработчика»** (переключатель справа сверху).
+2. Нажми **«Загрузить распакованное расширение»** и выбери папку
+   `%LOCALAPPDATA%\Programs\WhatsAppAIDigest\extension`. Её же открывает пункт «Папка расширения для Chrome…» в меню
+   значка в трее.
+3. Закрепи значок расширения через кнопку с пазлом.
+
+Этот шаг нельзя автоматизировать: Chrome не даёт программам ставить расширения не из Chrome Web Store.
+
+**4. Пользуйся.** Значок у часов: бирюзовый — всё готово, оранжевый — сервер запускается или нет ключа, серый — сервер
+остановлен. Открой <https://web.whatsapp.com/>, зайди в группу, прокрути чат вверх на нужный период, потом обратно
+вниз, и нажми значок расширения.
+
+**Обновление:** скачай и запусти установщик ещё раз (ключ и настройки сохранятся), затем нажми ↻ у расширения в
+`chrome://extensions` и обнови вкладку WhatsApp (F5).
+
+**Удаление:** «Параметры Windows» → «Приложения» → WhatsApp AI Digest → «Удалить». Установщик спросит, удалить ли
+ещё и ключ. Расширение удали в `chrome://extensions`.
+
+## Сборка из исходников на Windows (по-русски)
+
+Для тех, кто хочет менять код. Всё делается в PowerShell, WSL не нужен. Подробности — в разделах 1–8 ниже.
 
 **1. Установи один раз**
 
@@ -63,6 +100,14 @@ pnpm start     # сервер на http://127.0.0.1:3741, окно не закр
 
 **Обновление:** `git pull`, `pnpm install`, `pnpm build`. Затем ↻ у расширения в `chrome://extensions`, F5 на вкладке
 WhatsApp и перезапуск сервера (или «перезапустить» в меню трея).
+
+## Building the Windows installer
+
+`.github/workflows/installer.yml` builds `WhatsAppAIDigestSetup.exe` on every push (download it from the run's
+artifacts) and attaches it to a GitHub release when a `v*` tag is pushed (`git tag v0.2.0 && git push origin v0.2.0`).
+The installer ([`installer/WhatsAppAIDigest.iss`](installer/WhatsAppAIDigest.iss), Inno Setup 6) bundles `node.exe`, the server bundled
+into one file (`pnpm --filter @wad/server bundle`), the tray app and the built extension. It keeps settings in
+`%LOCALAPPDATA%\WhatsAppAIDigest\.env`, which the tray app passes to the server as `WAD_ENV_FILE`.
 
 ## Project structure
 

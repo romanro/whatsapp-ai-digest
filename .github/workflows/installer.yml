@@ -1,0 +1,95 @@
+name: Windows installer
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install, test, build
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm test
+          pnpm build
+          pnpm --filter @wad/server bundle
+
+      - name: Build tray app
+        run: dotnet build apps/tray-windows -c Release -o apps/tray-windows/dist
+
+      - name: Stage payload
+        run: |
+          $p = "installer/payload"
+          New-Item -ItemType Directory -Force "$p/node", "$p/server", "$p/extension" | Out-Null
+          Copy-Item apps/tray-windows/dist/WhatsAppAIDigestTray.exe $p/
+          Copy-Item (Get-Command node).Source "$p/node/node.exe"
+          Copy-Item apps/server/dist/server.mjs, apps/server/.env.example "$p/server/"
+          Copy-Item apps/extension/dist/* "$p/extension/" -Recurse
+          & "$p/node/node.exe" --version
+          Get-ChildItem $p -Recurse -File | Select-Object FullName, Length | Format-Table -AutoSize
+
+      - name: Build installer
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME.TrimStart("v") } else { "0.1.0-$($env:GITHUB_SHA.Substring(0,7))" }
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          & $iscc "/DAppVersion=$version" installer/WhatsAppAIDigest.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Smoke test (silent install, start the installed server, uninstall)
+        run: |
+          $setup = "installer/output/WhatsAppAIDigestSetup.exe"
+          Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/GROQKEY=gsk_test", "/TASKS=" -Wait
+          $app = "$env:LOCALAPPDATA\Programs\WhatsAppAIDigest"
+          $envFile = "$env:LOCALAPPDATA\WhatsAppAIDigest\.env"
+          foreach ($f in "WhatsAppAIDigestTray.exe", "node\node.exe", "server\server.mjs", "extension\manifest.json") {
+            if (-not (Test-Path "$app\$f")) { throw "missing $f" }
+          }
+          if (-not (Select-String -Path $envFile -Pattern "^GROQ_API_KEY=gsk_test$" -Quiet)) { throw "key not written to $envFile" }
+          $env:WAD_ENV_FILE = $envFile
+          $server = Start-Process "$app\node\node.exe" -ArgumentList "--use-system-ca", "server.mjs" -WorkingDirectory "$app\server" -PassThru -NoNewWindow
+          $health = $null
+          foreach ($i in 1..20) {
+            Start-Sleep 1
+            try { $health = Invoke-RestMethod http://127.0.0.1:3741/health; break } catch {}
+          }
+          Stop-Process $server -Force
+          if (-not $health -or $health.status -ne "ok" -or -not $health.ai.configured) { throw "server health check failed: $($health | ConvertTo-Json -Depth 5)" }
+          $health | ConvertTo-Json -Depth 5
+          Start-Process "$app\unins000.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES" -Wait
+          # The uninstaller re-launches itself from %TEMP%, so -Wait returns early: poll for the files to go.
+          foreach ($i in 1..30) { if (-not (Test-Path "$app\server\server.mjs")) { break }; Start-Sleep 1 }
+          if (Test-Path "$app\server\server.mjs") { throw "uninstall left files behind" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WhatsAppAIDigestSetup
+          path: installer/output/WhatsAppAIDigestSetup.exe
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE) { gh release create $tag installer/output/WhatsAppAIDigestSetup.exe --title "WhatsApp AI Digest $tag" --generate-notes }
+          else { gh release upload $tag installer/output/WhatsAppAIDigestSetup.exe --clobber }

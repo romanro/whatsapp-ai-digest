@@ -8,7 +8,8 @@
     "start": "node --use-system-ca --import tsx src/index.ts",
     "check-model": "node --use-system-ca --import tsx src/check-model.ts",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "bundle": "node bundle.mjs"
   },
   "dependencies": {
     "@fastify/cors": "^11.4.3",
@@ -21,6 +22,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
+    "esbuild": "0.28.2",
     "vitest": "^5.1.1"
   }
 }

@@ -4,6 +4,53 @@ using System.Text.RegularExpressions;
 
 namespace WadTray
 {
+    /// <summary>
+    /// Where the server lives. Two layouts:
+    /// - installed (Windows installer): node\node.exe and server\server.mjs next to the exe, settings in %LOCALAPPDATA%\WhatsAppAIDigest\.env;
+    /// - source checkout: the exe inside the repo, `node --import tsx src/index.ts` in apps\server, settings in apps\server\.env.
+    /// </summary>
+    internal sealed class Layout
+    {
+        public bool Installed;
+        public string ServerDir;
+        /// <summary>Bundled node.exe, or null to look for an installed Node.js.</summary>
+        public string BundledNode;
+        public string ServerArgs;
+        public string EnvFile;
+        public string EnvExample;
+        /// <summary>Unpacked extension folder (installed layout only).</summary>
+        public string ExtensionDir;
+
+        public static Layout Detect()
+        {
+            var exeDir = AppDomain.CurrentDomain.BaseDirectory;
+            var node = Path.Combine(exeDir, "node", "node.exe");
+            var server = Path.Combine(exeDir, "server");
+            if (File.Exists(node) && File.Exists(Path.Combine(server, "server.mjs")))
+            {
+                return new Layout
+                {
+                    Installed = true,
+                    ServerDir = server,
+                    BundledNode = node,
+                    ServerArgs = "--use-system-ca server.mjs",
+                    EnvFile = Path.Combine(Paths.DataDir, ".env"),
+                    EnvExample = Path.Combine(server, ".env.example"),
+                    ExtensionDir = Path.Combine(exeDir, "extension"),
+                };
+            }
+            var repo = Paths.FindRepoRoot();
+            if (repo == null) return null;
+            return new Layout
+            {
+                ServerDir = Paths.ServerDir(repo),
+                ServerArgs = "--use-system-ca --import tsx src/index.ts",
+                EnvFile = Paths.EnvFile(repo),
+                EnvExample = Paths.EnvExample(repo),
+            };
+        }
+    }
+
     /// <summary>Locates the project folder, node.exe and settings. Never reads anything except .env PORT.</summary>
     internal static class Paths
     {
@@ -73,11 +120,10 @@ namespace WadTray
             return null;
         }
 
-        public static int ReadPort(string repo)
+        public static int ReadPort(string env)
         {
             try
             {
-                var env = EnvFile(repo);
                 if (File.Exists(env))
                 {
                     foreach (var line in File.ReadAllLines(env))

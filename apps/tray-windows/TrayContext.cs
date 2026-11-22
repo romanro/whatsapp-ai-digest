@@ -24,9 +24,10 @@ namespace WadTray
         private readonly Timer _timer;
         private readonly Icon _iconOk, _iconStopped, _iconWarn;
 
-        private readonly ToolStripMenuItem _miStatus, _miAi, _miStart, _miStop, _miRestart, _miAutostart, _miEnv, _miLog, _miFolder;
+        private readonly ToolStripMenuItem _miStatus, _miAi, _miStart, _miStop, _miRestart, _miAutostart, _miEnv, _miLog, _miFolder, _miExtension;
 
-        private string _repo, _node, _setupProblem, _lastError;
+        private Layout _layout;
+        private string _node, _setupProblem, _lastError;
         private int _port = 3741;
         private ServerState _state = ServerState.Stopped;
         private HealthInfo _health = new HealthInfo();
@@ -49,6 +50,7 @@ namespace WadTray
             _miEnv = new ToolStripMenuItem("Настройки сервера (.env)…", null, (s, e) => OpenEnv());
             _miLog = new ToolStripMenuItem("Открыть журнал сервера", null, (s, e) => OpenLog());
             _miFolder = new ToolStripMenuItem("Указать папку проекта…", null, (s, e) => { ChooseRepo(); Setup(); StartServer(true); });
+            _miExtension = new ToolStripMenuItem("Папка расширения для Chrome…", null, (s, e) => OpenExtensionFolder());
             _miAutostart = new ToolStripMenuItem("Запускать при входе в Windows") { CheckOnClick = true, Checked = IsAutostart() };
             _miAutostart.CheckedChanged += (s, e) => SetAutostart(_miAutostart.Checked);
 
@@ -61,7 +63,7 @@ namespace WadTray
                 new ToolStripSeparator(),
                 _miStart, _miStop, _miRestart,
                 new ToolStripSeparator(),
-                _miEnv, _miLog, _miFolder, _miAutostart,
+                _miEnv, _miLog, _miExtension, _miFolder, _miAutostart,
                 new ToolStripSeparator(),
                 new ToolStripMenuItem("Выход", null, (s, e) => ExitApp()),
             });
@@ -79,7 +81,7 @@ namespace WadTray
             _timer.Start();
 
             Setup();
-            if (_repo == null && _setupProblem != null && Paths.FindRepoRoot() == null)
+            if (_layout == null && _setupProblem != null)
             {
                 ChooseRepo();
                 Setup();
@@ -97,18 +99,18 @@ namespace WadTray
         private void Setup()
         {
             _setupProblem = null;
-            _repo = Paths.FindRepoRoot();
-            if (_repo == null)
+            _layout = Layout.Detect();
+            if (_layout == null)
             {
                 _setupProblem = "Не найдена папка проекта. Меню → «Указать папку проекта…».";
             }
             else
             {
-                _port = Paths.ReadPort(_repo);
-                _node = Paths.FindNode();
+                _port = Paths.ReadPort(_layout.EnvFile);
+                _node = _layout.BundledNode ?? Paths.FindNode();
                 if (_node == null)
                     _setupProblem = "Не найден Node.js. Установите Node.js 22+ (nodejs.org) и перезапустите приложение.";
-                else if (!Directory.Exists(Path.Combine(Paths.ServerDir(_repo), "node_modules", "tsx")))
+                else if (!_layout.Installed && !Directory.Exists(Path.Combine(_layout.ServerDir, "node_modules", "tsx")))
                     _setupProblem = "Зависимости не установлены. Выполните «pnpm install» в папке проекта.";
             }
             _state = _setupProblem != null ? ServerState.NotSetUp : ServerState.Stopped;
@@ -145,12 +147,12 @@ namespace WadTray
                 }
             }
             if (_server.IsRunning || _state == ServerState.External) return;
-            _port = Paths.ReadPort(_repo);
+            _port = Paths.ReadPort(_layout.EnvFile);
             _lastError = null;
             _aiWarned = false;
             try
             {
-                _server.Start(_node, Paths.ServerDir(_repo));
+                _server.Start(_node, _layout);
                 _startedAt = DateTime.Now;
                 _state = ServerState.Starting;
             }
@@ -263,9 +265,10 @@ namespace WadTray
             _miStart.Enabled = !running && _state != ServerState.External && _state != ServerState.Starting;
             _miStop.Enabled = running;
             _miRestart.Enabled = running;
-            _miEnv.Enabled = _repo != null;
+            _miEnv.Enabled = _layout != null;
             _miLog.Enabled = File.Exists(Paths.LogFile);
-            _miFolder.Visible = _repo == null;
+            _miFolder.Visible = _layout == null;
+            _miExtension.Visible = _layout?.ExtensionDir != null;
 
             if (_tray.Icon != icon) _tray.Icon = icon;
             // NotifyIcon.Text is limited to 63 characters on .NET Framework.
@@ -294,11 +297,12 @@ namespace WadTray
 
         private void OpenEnv()
         {
-            if (_repo == null) return;
-            var env = Paths.EnvFile(_repo);
+            if (_layout == null) return;
+            var env = _layout.EnvFile;
             try
             {
-                if (!File.Exists(env) && File.Exists(Paths.EnvExample(_repo))) File.Copy(Paths.EnvExample(_repo), env);
+                Directory.CreateDirectory(Path.GetDirectoryName(env));
+                if (!File.Exists(env) && File.Exists(_layout.EnvExample)) File.Copy(_layout.EnvExample, env);
                 Process.Start(new ProcessStartInfo("notepad.exe", "\"" + env + "\"") { UseShellExecute = true });
                 Balloon("После сохранения .env выберите «Перезапустить сервер».", ToolTipIcon.Info);
             }
@@ -306,6 +310,13 @@ namespace WadTray
             {
                 Balloon("Не удалось открыть .env: " + ex.Message, ToolTipIcon.Error);
             }
+        }
+
+        private void OpenExtensionFolder()
+        {
+            if (_layout?.ExtensionDir == null) return;
+            Open(_layout.ExtensionDir);
+            Balloon("Chrome → chrome://extensions → «Режим разработчика» → «Загрузить распакованное расширение» → эта папка.", ToolTipIcon.Info);
         }
 
         private void OpenLog()

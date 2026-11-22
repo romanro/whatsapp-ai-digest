@@ -20,6 +20,7 @@ pnpm typecheck      # tsc in every package
 pnpm test           # vitest in every package
 pnpm --filter @wad/server check-model   # verify API key + model availability
 pnpm tray:build     # Windows tray app (.NET), apps/tray-windows
+pnpm --filter @wad/server bundle   # server → one file apps/server/dist/server.mjs (used by the installer)
 ```
 
 Run a single test file or test: `pnpm --filter @wad/server exec vitest run test/summarizer.test.ts -t "name"`. The package filters are `@wad/server`, `@wad/extension` and `@wad/shared`.
@@ -45,7 +46,9 @@ There is no TS compile step for the server or shared. The server runs TS directl
 - `summarizer.ts`: optional vision pass (photo → "[Фото: …]" text merged into messages) → `chunkMessages` by `BATCH_MAX_CHARS` → a per-batch JSON completion → `coerceAiOutput`/`parseAiSummary` (Zod) → merge → `enrichSummary`. `enrichSummary` replaces model-cited ids with real timestamps and sources from the extracted messages. UI timestamps never come from the model.
 - `ai/prompt.ts`: messages go to the model as escaped JSON inside a delimited block, and the prompt forbids following instructions inside them (prompt-injection defense). Keep that property when editing prompts.
 
-**`apps/tray-windows`**: a .NET Framework 4.8 WinForms tray app. It starts and stops the Node server inside a Job Object and polls `/health`. It is separate from the JS toolchain.
+**`apps/tray-windows`**: a .NET Framework 4.8 WinForms tray app. It starts and stops the Node server inside a Job Object and polls `/health`. It is separate from the JS toolchain. `Layout.Detect()` (Paths.cs) supports two layouts: a source checkout (runs `tsx src/index.ts`, settings in `apps/server/.env`) and the installed one (bundled `node\node.exe` + `server\server.mjs`, settings in `%LOCALAPPDATA%\WhatsAppAIDigest\.env`, passed to the server as `WAD_ENV_FILE`).
+
+**`installer/`** + `.github/workflows/installer.yml`: the Inno Setup installer is built only in CI on a Windows runner (on every push; attached to a release on `v*` tags). CI also runs a silent install, starts the installed server and checks `/health`. Inno Setup is not available on macOS, so the CI run is the only way to verify changes to the `.iss` file.
 
 ## Invariants to preserve
 
