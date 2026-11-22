@@ -36,6 +36,8 @@ import {
   type PreparedPayload,
 } from "../lib/pipeline.ts";
 import { normalizeDocName, parseDocument, type ParsedDocument } from "../lib/documents.ts";
+import { findDownloads } from "../lib/downloads.ts";
+import { fetchLocalDocument } from "../lib/api.ts";
 import type { CapturedImage } from "../lib/protocol.ts";
 import { loadSettings, type Settings } from "../lib/settings.ts";
 import { SummaryView } from "./SummaryView.tsx";
@@ -50,6 +52,8 @@ interface DocSlot {
   state: "none" | "reading" | "ok" | "error";
   doc?: ParsedDocument;
   error?: string;
+  /** Where the file came from: found in Chrome's downloads, or added by hand. */
+  source?: "downloads" | "manual";
 }
 
 interface Review {
@@ -66,18 +70,20 @@ interface Review {
 function docState(slot: DocSlot): string {
   if (slot.state === "reading") return "читаю…";
   if (slot.state === "error") return slot.error ?? "ошибка";
-  if (slot.state === "none" || !slot.doc) return "не добавлен";
+  if (slot.state === "none" || !slot.doc) return "нет в Загрузках — скачайте в WhatsApp";
   const d = slot.doc;
   const size = d.text !== undefined ? `${d.text.length.toLocaleString("ru-RU")} симв.` : `скан, ${d.pageImages?.length ?? 0} стр. как фото`;
-  return `✓ ${d.pages ? `${d.pages} стр., ` : ""}${size}${d.truncated ? " (обрезан)" : ""}`;
+  return `✓ ${slot.source === "downloads" ? "из Загрузок, " : ""}${d.pages ? `${d.pages} стр., ` : ""}${size}${d.truncated ? " (обрезан)" : ""}`;
 }
 
 function DocumentPicker({
   review,
   onFiles,
+  onRescan,
 }: {
   review: Review;
   onFiles: (files: File[]) => void;
+  onRescan: () => void;
 }) {
   const [over, setOver] = useState(false);
   if (!review.docs.length) return null;
@@ -95,6 +101,15 @@ function DocumentPicker({
           <span className="doc-state">{docState(slot)}</span>
         </div>
       ))}
+      {review.docs.some((d) => d.state === "none" || d.state === "error") && (
+        <span className="sub block">
+          Нажмите на документ в WhatsApp → «Скачать», и он подхватится из папки «Загрузки»{" "}
+          {IN_TAB ? "сам." : "при следующем открытии этого окна."}{" "}
+          <button className="link" onClick={onRescan}>
+            Проверить Загрузки
+          </button>
+        </span>
+      )}
       {review.unmatched.length > 0 && (
         <div className="warning" role="status">
           Не нашёл в чате документ с таким именем: {review.unmatched.join(", ")}
@@ -114,7 +129,7 @@ function DocumentPicker({
             onFiles(Array.from(e.dataTransfer.files));
           }}
         >
-          Скачайте документ в WhatsApp (нажмите на него → «Скачать») и перетащите файл сюда или выберите его:
+          Если файл сохранён в другом месте — перетащите его сюда или выберите:
           <input
             type="file"
             multiple
@@ -134,12 +149,12 @@ function DocumentPicker({
           className="secondary"
           onClick={() => void chrome.tabs.create({ url: chrome.runtime.getURL("popup.html?tab=1") })}
         >
-          Добавить документы — откроется во вкладке
+          Добавить файл вручную — откроется во вкладке
         </button>
       )}
       {!IN_TAB && (
         <span className="sub">
-          Выбор файла закрывает это маленькое окно, поэтому документы добавляются во вкладке. Там нажмите «Сформировать
+          Выбор файла закрывает это маленькое окно, поэтому вручную файлы добавляются во вкладке. Там нажмите «Сформировать
           сводку» ещё раз — отметки сохранятся.
         </span>
       )}
@@ -446,16 +461,12 @@ export function App() {
       const selected = new Set(
         photos.filter((p) => p.dataUrl).map((p) => p.ref),
       );
+      const docs: DocSlot[] = prepared.documentCandidates.map((candidate) => ({ candidate, state: "none" }));
       setPhase({
         kind: "review",
-        review: {
-          payload: prepared,
-          photos,
-          selected,
-          docs: prepared.documentCandidates.map((candidate) => ({ candidate, state: "none" })),
-          unmatched: [],
-        },
+        review: { payload: prepared, photos, selected, docs, unmatched: [] },
       });
+      void scanDownloads(docs);
     } catch {
       setPhase({
         kind: "error",
@@ -475,14 +486,65 @@ export function App() {
     });
   }
 
-  /** Matches added files to the document cards by name, then reads them (in this page — nothing is uploaded yet). */
+  const updateSlot = (index: number, patch: Partial<DocSlot>) =>
+    setPhase((ph) => {
+      if (ph.kind !== "review") return ph;
+      const docs = ph.review.docs.map((d, i) => (i === index ? { ...d, ...patch } : d));
+      return { kind: "review", review: { ...ph.review, docs } };
+    });
+
+  /** Reads a file into a document slot (in this page — nothing is sent to Groq yet). */
+  function readInto(index: number, file: File, source: DocSlot["source"]) {
+    updateSlot(index, { state: "reading", doc: undefined, error: undefined, source });
+    void parseDocument(file).then((r) =>
+      updateSlot(index, r.ok ? { state: "ok", doc: r.doc } : { state: "error", error: r.error }),
+    );
+  }
+
+  /** Picks up documents the user downloaded in WhatsApp from Chrome's download history (via the local server). */
+  async function scanDownloads(docs: DocSlot[]) {
+    if (!settings) return;
+    const open = docs.flatMap((d, index) =>
+      d.state === "none" || (d.state === "error" && d.source === "downloads") ? [{ index, name: d.candidate.name }] : [],
+    );
+    if (!open.length) return;
+    try {
+      const found = await findDownloads(open.map((o) => o.name));
+      await Promise.all(
+        open.map(async ({ index }, k) => {
+          const hit = found[k];
+          if (!hit) return;
+          updateSlot(index, { state: "reading", source: "downloads", error: undefined });
+          try {
+            readInto(index, await fetchLocalDocument(settings.backendUrl, hit.path, hit.name), "downloads");
+          } catch (err) {
+            updateSlot(index, { state: "error", error: err instanceof Error ? err.message : "Не удалось прочитать файл." });
+          }
+        }),
+      );
+    } catch {
+      // Download history unavailable — the manual picker still works.
+    }
+  }
+
+  // While the review is open, a download that finishes in WhatsApp is picked up at once.
+  const [downloadTick, setDownloadTick] = useState(0);
+  const hasDocs = phase.kind === "review" && phase.review.docs.length > 0;
+  useEffect(() => {
+    if (!hasDocs || !chrome.downloads?.onChanged) return;
+    const onChanged = (delta: chrome.downloads.DownloadDelta) => {
+      if (delta.state?.current === "complete") setDownloadTick((t) => t + 1);
+    };
+    chrome.downloads.onChanged.addListener(onChanged);
+    return () => chrome.downloads.onChanged.removeListener(onChanged);
+  }, [hasDocs]);
+  useEffect(() => {
+    if (downloadTick && phase.kind === "review") void scanDownloads(phase.review.docs);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [downloadTick]);
+
+  /** Matches added files to the document cards by name, then reads them. */
   function onFiles(files: File[]) {
-    const updateSlot = (index: number, patch: Partial<DocSlot>) =>
-      setPhase((ph) => {
-        if (ph.kind !== "review") return ph;
-        const docs = ph.review.docs.map((d, i) => (i === index ? { ...d, ...patch } : d));
-        return { kind: "review", review: { ...ph.review, docs } };
-      });
     if (phase.kind !== "review") return;
     const slots = phase.review.docs;
     const unmatched: string[] = [];
@@ -497,10 +559,7 @@ export function App() {
         continue;
       }
       taken.add(index);
-      updateSlot(index, { state: "reading", doc: undefined, error: undefined });
-      void parseDocument(file).then((r) =>
-        updateSlot(index, r.ok ? { state: "ok", doc: r.doc } : { state: "error", error: r.error }),
-      );
+      readInto(index, file, "manual");
     }
     setPhase((ph) => (ph.kind === "review" ? { kind: "review", review: { ...ph.review, unmatched } } : ph));
   }
@@ -783,7 +842,7 @@ export function App() {
             </li>
           </ul>
           <PhotoPicker review={phase.review} onToggle={togglePhoto} />
-          <DocumentPicker review={phase.review} onFiles={onFiles} />
+          <DocumentPicker review={phase.review} onFiles={onFiles} onRescan={() => void scanDownloads(phase.review.docs)} />
           <CoverageWarning coverage={phase.review.payload.coverage} />
           <div className="row">
             <button

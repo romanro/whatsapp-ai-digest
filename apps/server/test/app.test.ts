@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
@@ -118,5 +121,31 @@ describe("POST /api/summarize", () => {
   it("returns 503 when no API key is configured", async () => {
     app = buildApp(config, new FakeProvider([new AiError("not_configured", "no key")], false));
     expect((await post(makeRequest())).statusCode).toBe(503);
+  });
+});
+
+describe("POST /api/local-document", () => {
+  const dir = mkdtempSync(join(tmpdir(), "wad-"));
+  const pdf = join(dir, "Расписание.pdf");
+  writeFileSync(pdf, "%PDF-1.4 test");
+  writeFileSync(join(dir, "secret.txt"), "nope");
+  symlinkSync(join(dir, "secret.txt"), join(dir, "link.pdf"));
+  const read = (path: unknown, headers: Record<string, string> = { origin: ORIGIN }) =>
+    app.inject({ method: "POST", url: "/api/local-document", headers: { host: "127.0.0.1:3741", "content-type": "application/json", ...headers }, payload: { path } });
+
+  it("returns a downloaded PDF to the extension", async () => {
+    app = buildApp(config, new FakeProvider([]));
+    const res = await read(pdf);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe("%PDF-1.4 test");
+  });
+
+  it("refuses other origins, other file types, links to them and relative or missing paths", async () => {
+    app = buildApp(config, new FakeProvider([]));
+    expect((await read(pdf, { origin: "https://evil.example" })).statusCode).toBe(403);
+    expect((await read(join(dir, "secret.txt"))).statusCode).toBe(403);
+    expect((await read(join(dir, "link.pdf"))).statusCode).toBe(403);
+    expect((await read("Расписание.pdf")).statusCode).toBe(400);
+    expect((await read(join(dir, "нет.pdf"))).statusCode).toBe(404);
   });
 });

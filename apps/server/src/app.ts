@@ -4,6 +4,7 @@ import { HealthResponseSchema, SummarizeRequestSchema, type ErrorResponse, type 
 import type { AppConfig } from "./config.ts";
 import { AiError, type AiProvider } from "./ai/provider.ts";
 import { summarize } from "./summarizer.ts";
+import { readLocalDocument } from "./local-file.ts";
 
 export const VERSION = "0.1.0";
 // Text (LIMITS.maxTotalChars, 2 bytes/char for Hebrew/Cyrillic) + up to LIMITS.maxImages compressed photos.
@@ -78,6 +79,13 @@ export function buildApp(config: AppConfig, provider: AiProvider): FastifyInstan
         },
       },
     });
+  });
+
+  // A document from Chrome's download history (the user clicked "Download" in WhatsApp). Never logs the path.
+  app.post("/api/local-document", async (req, reply) => {
+    const r = await readLocalDocument((req.body as { path?: unknown } | null)?.path);
+    if (!r.ok) return reply.code(r.status).send(errorBody(r.code, r.message));
+    return reply.type("application/octet-stream").send(r.bytes);
   });
 
   let inFlight = false;

@@ -29,6 +29,25 @@ export async function fetchHealth(backendUrl: string, signal?: AbortSignal): Pro
   return HealthResponseSchema.parse(await res.json());
 }
 
+/** Asks the local server for a file found in Chrome's download history. */
+export async function fetchLocalDocument(backendUrl: string, path: string, name: string): Promise<File> {
+  let res: Response;
+  try {
+    res = await fetch(`${base(backendUrl)}/api/local-document`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+  } catch {
+    throw new ApiError("Нет связи с локальным сервером.", "offline");
+  }
+  if (!res.ok) {
+    const parsed = ErrorResponseSchema.safeParse(await res.json().catch(() => null));
+    throw new ApiError(parsed.success ? parsed.data.error.message : `Ошибка сервера (${res.status}).`, parsed.success ? parsed.data.error.code : "http");
+  }
+  return new File([await res.arrayBuffer()], name);
+}
+
 export async function requestSummary(backendUrl: string, body: SummarizeRequest, signal?: AbortSignal): Promise<SummarizeResponse> {
   let res: Response;
   try {
