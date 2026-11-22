@@ -244,7 +244,7 @@ keep data on your machine only.
 **What is done to protect it**
 
 - Nothing is read until you click, nothing is sent until you confirm: every summary shows what will be sent and needs
-  **Отправить в Groq**. The consent checkboxes are remembered per group.
+  **Отправить в Groq**. There are no consent checkboxes: that button is the confirmation.
 - The extension never downloads anything. Text is sent; photos only with “Анализировать фото” (the ones you keep
   selected); documents (PDF/DOCX) only if you download them in WhatsApp yourself and add them in the popup — their text
   is redacted like messages, a scanned PDF goes as its first 3 page images. Video and voice notes are never sent.
@@ -257,7 +257,7 @@ keep data on your machine only.
   headers or API keys, and stores nothing on disk.
 - The extension keeps in the Chrome profile (`chrome.storage.local`, on disk): the last summary of each group (up to 20
   groups, with the messages and photos it cites), the readings of analysed photos (so a photo is sent to Groq only once)
-  and the per-group checkboxes. If nothing changed since a group's saved summary, it is shown without sending anything.
+  and the per-group photo switch. If nothing changed since a group's saved summary, it is shown without sending anything.
   “Очистить” removes one summary; ⚙ → “Удалить сохранённые данные” removes all of it.
 - No analytics, telemetry or third-party tracking.
 

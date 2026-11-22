@@ -99,11 +99,11 @@ function setup() {
   return { runner, run, sent, session, cache };
 }
 
-describe("per-group checkboxes", () => {
+describe("per-group photo switch", () => {
   it("are remembered for the group they were set in only", async () => {
     const kv = memoryKV();
-    await saveGroupPrefs(kv, "Группа А", { permission: true, upload: true, images: true });
-    expect(await loadGroupPrefs(kv, "Группа А")).toEqual({ permission: true, upload: true, images: true });
+    await saveGroupPrefs(kv, "Группа А", { images: true });
+    expect(await loadGroupPrefs(kv, "Группа А")).toEqual({ images: true });
     expect(await loadGroupPrefs(kv, "Группа Б")).toBeNull();
     // Group names are not used as storage keys.
     expect(JSON.stringify([...kv.data.entries()])).not.toContain("Группа");
@@ -144,7 +144,7 @@ describe("summary jobs with the cache", () => {
     expect(await loadSavedSummary(kv, `Группа ${MAX_SAVED_SUMMARIES}`)).not.toBeNull();
     await deleteSavedSummary(kv, `Группа ${MAX_SAVED_SUMMARIES}`);
     expect(await loadSavedSummary(kv, `Группа ${MAX_SAVED_SUMMARIES}`)).toBeNull();
-    await saveGroupPrefs(kv, "Группа 1", { permission: true, upload: true, images: false });
+    await saveGroupPrefs(kv, "Группа 1", { images: false });
     await clearAllSaved(kv);
     expect(kv.data.size).toBe(0);
   });

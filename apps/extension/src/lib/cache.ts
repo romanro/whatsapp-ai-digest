@@ -39,11 +39,10 @@ export async function sha256(text: string): Promise<string> {
 /** Storage key of a group (by its name as sent in requests); the name itself isn't used as a key. */
 export const groupKey = async (groupName: string) => (await sha256(`group:${groupName.slice(0, LIMITS.maxGroupNameChars)}`)).slice(0, 24);
 
-/* ---------------- checkboxes ---------------- */
+/* ---------------- per-group settings ---------------- */
 
 export interface GroupPrefs {
-  permission: boolean;
-  upload: boolean;
+  /** The "analyse photos" switch. */
   images: boolean;
 }
 

@@ -315,8 +315,6 @@ export function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [period, setPeriod] = useState<Period>("24h");
   const [includeImages, setIncludeImages] = useState(false);
-  const [consentPermission, setConsentPermission] = useState(false);
-  const [consentUpload, setConsentUpload] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [copied, setCopied] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -377,15 +375,13 @@ export function App() {
   const probe = status.whatsapp.state === "ok" ? status.whatsapp.data : null;
   const groupName = probe?.chatOpen && probe.isGroup ? probe.groupName : null;
 
-  // Checkboxes are remembered per group; the group's saved summary is shown when nothing else is.
+  // The photo switch is remembered per group; the group's saved summary is shown when nothing else is.
   useEffect(() => {
     if (!groupName) return;
     let cancelled = false;
     void (async () => {
       const prefs = await loadGroupPrefs(chromeLocal, groupName).catch(() => null);
       if (cancelled) return;
-      setConsentPermission(prefs?.permission ?? false);
-      setConsentUpload(prefs?.upload ?? false);
       if (prefs) setIncludeImages(prefs.images);
       const saved = await loadSavedSummary(chromeLocal, groupName).catch(() => null);
       if (cancelled) return;
@@ -401,16 +397,9 @@ export function App() {
     };
   }, [groupName]);
 
-  function updatePrefs(change: Partial<{ permission: boolean; upload: boolean; images: boolean }>) {
-    const next = {
-      permission: change.permission ?? consentPermission,
-      upload: change.upload ?? consentUpload,
-      images: change.images ?? includeImages,
-    };
-    setConsentPermission(next.permission);
-    setConsentUpload(next.upload);
-    setIncludeImages(next.images);
-    if (groupName) void saveGroupPrefs(chromeLocal, groupName, next).catch(() => undefined);
+  function setPhotos(images: boolean) {
+    setIncludeImages(images);
+    if (groupName) void saveGroupPrefs(chromeLocal, groupName, { images }).catch(() => undefined);
   }
   const health = status.backend.state === "ok" ? status.backend.data : null;
   const aiReady = !!health?.ai.configured && health.ai.modelAvailable !== false;
@@ -427,8 +416,6 @@ export function App() {
     !!isGroup &&
     !!health &&
     aiReady &&
-    consentPermission &&
-    consentUpload &&
     !busy &&
     status.tabId !== null;
 
@@ -741,7 +728,7 @@ export function App() {
               type="checkbox"
               checked={photosOn}
               disabled={busy || !visionReady}
-              onChange={(e) => updatePrefs({ images: e.target.checked })}
+              onChange={(e) => setPhotos(e.target.checked)}
             />
             <span>
               Анализировать фото <span className="beta">бета</span>
@@ -755,37 +742,14 @@ export function App() {
         )}
 
         <div className="consent">
-          <label>
-            <input
-              type="checkbox"
-              checked={consentPermission}
-              onChange={(e) => updatePrefs({ permission: e.target.checked })}
-              disabled={busy}
-            />
-            <span>
-              Я подтверждаю, что имею право обрабатывать сообщения этой группы.
-            </span>
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={consentUpload}
-              onChange={(e) => updatePrefs({ upload: e.target.checked })}
-              disabled={busy}
-            />
-            <span>
-              Я согласен(на), что текст выбранных сообщений
-              {photosOn ? " и выбранные фото" : ""} будут отправлены в Groq для
-              анализа. Автоматическое чтение может противоречить условиям
-              использования WhatsApp.
-            </span>
-          </label>
           <details className="privacy">
             <summary>Конфиденциальность</summary>
             <p>
               Расширение только читает уже показанные на экране сообщения
               открытой группы — ничего не отправляет в WhatsApp и не меняет.
-              Перед отправкой номера телефонов, email и номера карт скрываются,
+              Текст выбранных сообщений{photosOn ? ", выбранные фото" : ""} и
+              документы уходят в Groq только после нажатия «Отправить в Groq» на
+              экране проверки. Перед отправкой номера телефонов, email и номера карт скрываются,
               а номера вместо имён заменяются на «Участник N». Имена, детали и
               свободный текст всё равно могут содержать личные данные — они
               будут переданы в Groq (облачный AI-сервис) через ваш локальный
@@ -795,7 +759,9 @@ export function App() {
               Сервер ничего не сохраняет и не пишет сообщения в журналы.
               Расширение хранит в Chrome последнюю сводку каждой группы и
               распознанный текст фото, чтобы не отправлять их повторно —
-              удалить: ⚙ → «Удалить сохранённые данные».
+              удалить: ⚙ → «Удалить сохранённые данные». Обрабатывайте только
+              группы, в которых вы вправе это делать; автоматическое чтение
+              может противоречить условиям использования WhatsApp.
             </p>
           </details>
         </div>
