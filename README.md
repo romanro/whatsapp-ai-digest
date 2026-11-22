@@ -46,6 +46,12 @@ Chrome popup (React) ──► content script (reads visible messages of the ope
 остановлен. Открой <https://web.whatsapp.com/>, зайди в группу, прокрути чат вверх на нужный период, потом обратно
 вниз, и нажми значок расширения.
 
+**Документы (PDF, DOCX).** Если в чате за период есть документы, экран проверки покажет их список. Расширение само файлы
+не скачивает: нажми на документ в WhatsApp → «Скачать», затем «Добавить документы» (окно откроется во вкладке) и
+перетащи туда скачанный файл. Он читается прямо в браузере; в Groq уходит его текст (телефоны, email и номера карт
+скрываются), а для скана — первые 3 страницы как картинки. В сводке под источником будет краткое изложение документа,
+главное из него и, для коротких документов, перевод целиком. Старый формат .doc не поддерживается.
+
 **Обновление:** скачай и запусти установщик ещё раз (ключ и настройки сохранятся), затем нажми ↻ у расширения в
 `chrome://extensions` и обнови вкладку WhatsApp (F5).
 
@@ -238,7 +244,9 @@ keep data on your machine only.
 
 - Nothing is read until you click, nothing is sent until you confirm: every summary shows what will be sent and needs
   **Отправить в Groq**. The consent checkboxes are remembered per group.
-- Text only: media, voice notes and files are never downloaded or sent.
+- The extension never downloads anything. Text is sent; photos only with “Анализировать фото” (the ones you keep
+  selected); documents (PDF/DOCX) only if you download them in WhatsApp yourself and add them in the popup — their text
+  is redacted like messages, a scanned PDF goes as its first 3 page images. Video and voice notes are never sent.
 - Before upload (in the browser, and again on the server): phone numbers, emails, card numbers, IBANs and URL query
   strings are removed; senders shown as phone numbers become “Участник N”. WhatsApp's internal ids (which contain phone
   numbers) are hashed and never sent.

@@ -15,6 +15,7 @@ import {
   type SummarizeResponse,
 } from "@wad/shared";
 import { AiError, type AiProvider } from "./ai/provider.ts";
+import { analyzeDocuments, formatDigestForPrompt, type DocumentAnalysis } from "./documents.ts";
 import { VISION_SYSTEM, buildChunkPrompt, buildMergePrompt, buildVisionUser, type PromptMessage } from "./ai/prompt.ts";
 
 export interface SummarizerOptions {
@@ -173,6 +174,14 @@ export function mergeReadings(messages: InputMessage[], readings: Map<string, st
       return r ? { ...m, text: [m.text.trim(), ...r].filter(Boolean).join("\n") } : m;
     })
     .filter((m) => m.text.trim() !== "");
+}
+
+/** Appends each document's digest to the text of the message it was attached to. */
+export function mergeDocuments(messages: InputMessage[], digests: DocumentAnalysis["digests"]): InputMessage[] {
+  return messages.map((m) => {
+    const d = digests.get(m.id);
+    return d ? { ...m, text: [m.text.trim(), ...d.map(formatDigestForPrompt)].filter(Boolean).join("\n") } : m;
+  });
 }
 
 /* ---------------- AI output parsing & validation ---------------- */
@@ -370,6 +379,19 @@ export function enrichSummary(
   };
 }
 
+/** Shows each cited message's documents (digest and translation) under its source. */
+function attachDocuments(summary: EnrichedSummary, digests: DocumentAnalysis["digests"]): EnrichedSummary {
+  if (!digests.size) return summary;
+  const out = { ...summary } as EnrichedSummary;
+  for (const key of SECTION_KEYS) {
+    (out[key] as { sources: SourceRef[] }[]) = (summary[key] as { sources: SourceRef[] }[]).map((item) => ({
+      ...item,
+      sources: item.sources.map((s) => ({ ...s, documents: digests.get(s.id) ?? s.documents })),
+    }));
+  }
+  return out;
+}
+
 /* ---------------- Orchestration ---------------- */
 
 /** Server-side defence in depth: re-apply redaction even though the extension already did. */
@@ -383,7 +405,7 @@ export function prepareMessages(messages: InputMessage[]): { prompt: PromptMessa
       const shortId = `m${i + 1}`;
       const sender = pseudo.pseudonymize(m.sender);
       const text = redactText(m.text).text;
-      sourceMap.set(shortId, { id: m.id, timestamp: m.timestamp, sender, text, translation: null });
+      sourceMap.set(shortId, { id: m.id, timestamp: m.timestamp, sender, text, translation: null, documents: [] });
       return { id: shortId, t: promptTime(m.timestamp), from: sender, text };
     });
   return { prompt, sourceMap };
@@ -398,9 +420,10 @@ export async function summarize(
   const maxTokens = opts.maxOutputTokens ?? 8192;
 
   const vision = await analyzeImages(req.images, new Map(req.messages.map((m) => [m.id, m])), provider, opts);
-  const messages = mergeReadings(req.messages, vision.readings);
+  const docs = await analyzeDocuments(req.documents, provider, { onError: opts.onImageError, sleep: opts.sleep });
+  const messages = mergeReadings(mergeDocuments(req.messages, docs.digests), vision.readings);
   if (!messages.length) {
-    throw new AiError("invalid_output", "Не удалось распознать ни одного фото, а текстовых сообщений нет.");
+    throw new AiError("invalid_output", "Не удалось прочитать ни одного фото или документа, а текстовых сообщений нет.");
   }
 
   const { prompt, sourceMap } = prepareMessages(messages);
@@ -441,10 +464,15 @@ export async function summarize(
     }
   }
 
-  const { summary, unknownDropped } = enrichSummary(merged, sourceMap, translations);
+  const enriched = enrichSummary(merged, sourceMap, translations);
+  const { unknownDropped } = enriched;
+  const summary = attachDocuments(enriched.summary, docs.digests);
   const coverage = { ...req.coverage, warnings: [...req.coverage.warnings] };
   if (vision.failed > 0) {
     coverage.warnings.push(`${vision.failed} фото не удалось распознать — их содержимое не попало в сводку.`);
+  }
+  if (docs.failed > 0) {
+    coverage.warnings.push(`${docs.failed} документ(ов) не удалось разобрать — их содержимое не попало в сводку.`);
   }
   return {
     summary,
@@ -458,6 +486,10 @@ export async function summarize(
       imagesFailed: vision.failed,
       imagesCached: vision.cached,
       imageReadings: vision.fresh,
+      documentsAnalyzed: docs.analyzed,
+      documentsCached: docs.cached,
+      documentsFailed: docs.failed,
+      documentDigests: docs.fresh,
       visionModel: req.images.length ? provider.visionModel : null,
       generatedAt: new Date().toISOString(),
     },

@@ -39,6 +39,8 @@ export interface RawMessage {
   text: string;
   /** Opaque references to photos rendered in this message (resolved by the content script on request). */
   imageRefs?: string[];
+  /** Names of documents (PDF/DOCX…) attached to this message — only the card WhatsApp shows; the file isn't read. */
+  documents?: string[];
 }
 
 /**

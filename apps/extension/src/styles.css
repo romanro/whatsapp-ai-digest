@@ -176,3 +176,17 @@ h1 { font-size: 15px; font-weight: 650; }
 .prose h2 { font-size: 15px; margin-top: 4px; }
 .prose ul { padding-left: 20px; }
 .prose li { margin: 6px 0; }
+
+/* Documents (PDF/DOCX) */
+.source-document ul { margin: 4px 0 0; padding-left: 18px; font-size: 12px; }
+.source-document details summary { font-size: 12px; color: var(--accent); cursor: pointer; margin-top: 4px; }
+.document-translation { max-height: 320px; overflow: auto; }
+.docs { margin: 8px 0; display: flex; flex-direction: column; gap: 6px; }
+.doc-row { display: flex; gap: 8px; align-items: baseline; font-size: 12px; padding: 6px 8px; border-radius: 8px; background: var(--chip); }
+.doc-row .doc-name { font-weight: 600; overflow-wrap: anywhere; }
+.doc-row .doc-state { margin-left: auto; white-space: nowrap; color: var(--muted); }
+.doc-row.ok .doc-state { color: var(--ok); }
+.doc-row.error .doc-state { color: var(--fail); white-space: normal; }
+.dropzone { border: 2px dashed var(--border); border-radius: 10px; padding: 12px; text-align: center; font-size: 12px; color: var(--muted); }
+.dropzone.over { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.dropzone input { display: block; margin: 6px auto 0; }

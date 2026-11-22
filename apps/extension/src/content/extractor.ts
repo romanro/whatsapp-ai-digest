@@ -1,6 +1,7 @@
 import { dedupeMessages, normalizeSender, normalizeText, opaqueKey, type RawMessage } from "@wad/shared";
 import { dateFromNeighbours, inferDateOrder, labelToDate, parseClock, parseLabel, toLocalIso, type DateOrder, type ParsedLabel } from "@wad/shared";
 import {
+  DOCUMENT_NAME_RE,
   GROUP_ID_MARKER,
   GROUP_MIN_DISTINCT_SENDERS,
   GROUP_MIN_SUBTITLE_COMMAS,
@@ -35,6 +36,8 @@ export interface ExtractionResult {
     imagesLoaded: number;
     /** Photos shown only as a blurred placeholder (not downloaded by WhatsApp). */
     imagesNotLoaded: number;
+    /** Document cards (PDF/DOCX…) seen; their files are only read if the user adds them in the popup. */
+    documents: number;
     truncated: number;
     /** Captionless photos dated from neighbouring messages where another day was also possible. */
     photoDateUncertain: number;
@@ -148,6 +151,24 @@ function rowImages(row: Element): { loaded: HTMLImageElement[]; notLoaded: numbe
   return { loaded: loaded.slice(0, 4), notLoaded };
 }
 
+/** Names of documents attached to a row (from the card WhatsApp shows; the file itself is never touched). */
+function rowDocuments(row: Element, labelEl: Element | null): string[] {
+  const names = new Set<string>();
+  const cards = queryAll(row, SELECTORS.documentCard).filter((c) => !isInsideQuote(c, row));
+  // The message text (caption) lives in the label element, the same place the text is extracted from.
+  const textEls = labelEl ? queryAll(labelEl, SELECTORS.messageText).filter((el) => !isInsideQuote(el, row)) : [];
+  for (const scope of cards.length ? cards : [row]) {
+    for (const el of Array.from(scope.querySelectorAll("*"))) {
+      if (el.children.length || isInsideQuote(el, row)) continue;
+      // A text message that merely mentions "file.pdf" is not a document.
+      if (textEls.some((t) => t.contains(el))) continue;
+      const name = normalizeText(el.getAttribute("title") || el.textContent || "");
+      if (DOCUMENT_NAME_RE.test(name)) names.add(name);
+    }
+  }
+  return [...names].slice(0, 5);
+}
+
 /**
  * Same as extractRenderedMessages, plus a map from image ref → <img> element so the content script can
  * later read the photos the user selects. The map never leaves the content script.
@@ -174,6 +195,7 @@ export function extractWithImages(
   type Pending = {
     key: string;
     label: ParsedLabel | null;
+    documents: string[];
     /** Captionless photo: no label, only the bubble clock and (maybe) the author name. */
     photo?: { clock: { hour: number; minute: number } | null; sender: string | null };
     text: string;
@@ -185,6 +207,7 @@ export function extractWithImages(
   let otherMedia = 0;
   let imagesLoaded = 0;
   let imagesNotLoaded = 0;
+  let documents = 0;
   let truncated = 0;
 
   for (const row of rows) {
@@ -195,14 +218,16 @@ export function extractWithImages(
 
     const labelEl = queryAll(row, SELECTORS.prePlainText).find((el) => !isInsideQuote(el, row));
     if (!labelEl) {
-      // Captionless photos carry no label; everything else here is a system notice, other media, deleted message…
+      // Captionless photos and documents carry no label; anything else here is a system notice, other media…
       const imgs = rowImages(row);
-      if (!imgs.loaded.length && !imgs.notLoaded) {
+      const docs = rowDocuments(row, null);
+      if (!imgs.loaded.length && !imgs.notLoaded && !docs.length) {
         noLabel++;
         continue;
       }
       imagesNotLoaded += imgs.notLoaded;
-      if (!imgs.loaded.length) {
+      documents += docs.length;
+      if (!imgs.loaded.length && !docs.length) {
         otherMedia++;
         continue;
       }
@@ -213,12 +238,12 @@ export function extractWithImages(
         return ref;
       });
       imagesLoaded += imageRefs.length;
-      photoOnly++;
+      if (imageRefs.length) photoOnly++;
       const author = queryAll(row, SELECTORS.author).find((el) => !isInsideQuote(el, row));
       const clock = parseClock(queryFirst(row, SELECTORS.msgMeta)?.textContent ?? "");
       // No author element = consecutive message of the previous sender (WhatsApp shows the name once).
       const sender = author ? normalizeSender(author.textContent) : (pending.at(-1)?.label?.sender ?? pending.at(-1)?.photo?.sender ?? null);
-      pending.push({ key, label: null, photo: { clock, sender }, text: "", imageRefs });
+      pending.push({ key, label: null, photo: { clock, sender }, text: "", imageRefs, documents: docs });
       continue;
     }
     const textEl = queryAll(labelEl, SELECTORS.messageText).find((el) => !isInsideQuote(el, row));
@@ -232,13 +257,15 @@ export function extractWithImages(
       return ref;
     });
     imagesLoaded += imageRefs.length;
-    if (!text && !imageRefs.length) {
+    const docs = rowDocuments(row, labelEl);
+    documents += docs.length;
+    if (!text && !imageRefs.length && !docs.length) {
       otherMedia++;
       continue;
     }
-    if (!text) photoOnly++;
+    if (!text && imageRefs.length) photoOnly++;
     if (text && hasReadMore(row)) truncated++;
-    pending.push({ key, label: parseLabel(labelEl.getAttribute("data-pre-plain-text") ?? ""), text, imageRefs });
+    pending.push({ key, label: parseLabel(labelEl.getAttribute("data-pre-plain-text") ?? ""), text, imageRefs, documents: docs });
   }
 
   const labels = pending.flatMap((x) => (x.label ? [x.label] : []));
@@ -266,6 +293,7 @@ export function extractWithImages(
       timestamp: date ? toLocalIso(date) : null,
       text: x.text,
       ...(x.imageRefs.length ? { imageRefs: x.imageRefs } : {}),
+      ...(x.documents.length ? { documents: x.documents } : {}),
     };
   });
 
@@ -287,6 +315,7 @@ export function extractWithImages(
       otherMedia,
       imagesLoaded,
       imagesNotLoaded,
+      documents,
       truncated,
       photoDateUncertain,
       duplicatesRemoved: messages.length - deduped.length,

@@ -32,6 +32,7 @@ const request = {
     },
   ],
   images: [{ messageId: "a", dataUrl: "data:image/jpeg;base64,AA==" }],
+  documents: [],
 } satisfies SummarizeRequest;
 
 const result = { groupName: "Группа" } as unknown as SummarizeResponse;

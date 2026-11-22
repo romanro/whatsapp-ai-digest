@@ -32,8 +32,10 @@ import {
 import {
   attachImages,
   preparePayload,
+  type DocumentCandidate,
   type PreparedPayload,
 } from "../lib/pipeline.ts";
+import { normalizeDocName, parseDocument, type ParsedDocument } from "../lib/documents.ts";
 import type { CapturedImage } from "../lib/protocol.ts";
 import { loadSettings, type Settings } from "../lib/settings.ts";
 import { SummaryView } from "./SummaryView.tsx";
@@ -43,11 +45,106 @@ import { NOT_GROUP_MESSAGE } from "../content/extractor.ts";
 /** The popup page can also be opened in a full browser tab (⤢) to read a long summary and its photos. */
 const IN_TAB = new URLSearchParams(location.search).has("tab");
 
+interface DocSlot {
+  candidate: DocumentCandidate;
+  state: "none" | "reading" | "ok" | "error";
+  doc?: ParsedDocument;
+  error?: string;
+}
+
 interface Review {
   payload: PreparedPayload;
   /** Photos read from the page (only when photo analysis is on). */
   photos: CapturedImage[];
   selected: Set<string>;
+  /** Document cards in the period; the user adds the downloaded files. */
+  docs: DocSlot[];
+  /** Files that matched no document in the chat. */
+  unmatched: string[];
+}
+
+function docState(slot: DocSlot): string {
+  if (slot.state === "reading") return "читаю…";
+  if (slot.state === "error") return slot.error ?? "ошибка";
+  if (slot.state === "none" || !slot.doc) return "не добавлен";
+  const d = slot.doc;
+  const size = d.text !== undefined ? `${d.text.length.toLocaleString("ru-RU")} симв.` : `скан, ${d.pageImages?.length ?? 0} стр. как фото`;
+  return `✓ ${d.pages ? `${d.pages} стр., ` : ""}${size}${d.truncated ? " (обрезан)" : ""}`;
+}
+
+function DocumentPicker({
+  review,
+  onFiles,
+}: {
+  review: Review;
+  onFiles: (files: File[]) => void;
+}) {
+  const [over, setOver] = useState(false);
+  if (!review.docs.length) return null;
+  const added = review.docs.filter((d) => d.state === "ok").length;
+  return (
+    <div className="docs">
+      <strong>
+        Документы: добавлено {added} из {review.docs.length}
+      </strong>
+      {review.docs.map((slot, i) => (
+        <div key={i} className={`doc-row ${slot.state}`}>
+          <span className="doc-name" dir="auto">
+            📄 {slot.candidate.name}
+          </span>
+          <span className="doc-state">{docState(slot)}</span>
+        </div>
+      ))}
+      {review.unmatched.length > 0 && (
+        <div className="warning" role="status">
+          Не нашёл в чате документ с таким именем: {review.unmatched.join(", ")}
+        </div>
+      )}
+      {IN_TAB ? (
+        <div
+          className={over ? "dropzone over" : "dropzone"}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setOver(true);
+          }}
+          onDragLeave={() => setOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setOver(false);
+            onFiles(Array.from(e.dataTransfer.files));
+          }}
+        >
+          Скачайте документ в WhatsApp (нажмите на него → «Скачать») и перетащите файл сюда или выберите его:
+          <input
+            type="file"
+            multiple
+            accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            onChange={(e) => {
+              onFiles(Array.from(e.target.files ?? []));
+              e.target.value = "";
+            }}
+          />
+          <span className="sub block">
+            Файл читается здесь, на компьютере. В Groq уйдёт его текст (телефоны, email и номера карт скрываются) или, если это
+            скан, первые {3} страницы как картинки.
+          </span>
+        </div>
+      ) : (
+        <button
+          className="secondary"
+          onClick={() => void chrome.tabs.create({ url: chrome.runtime.getURL("popup.html?tab=1") })}
+        >
+          Добавить документы — откроется во вкладке
+        </button>
+      )}
+      {!IN_TAB && (
+        <span className="sub">
+          Выбор файла закрывает это маленькое окно, поэтому документы добавляются во вкладке. Там нажмите «Сформировать
+          сводку» ещё раз — отметки сохранятся.
+        </span>
+      )}
+    </div>
+  );
 }
 
 type Phase =
@@ -84,8 +181,12 @@ const savedAt = (iso: string) =>
 function jobNote(job: Job | null): string | undefined {
   if (job?.reused)
     return "Новых сообщений и фото с прошлой сводки нет — показана сохранённая, в Groq ничего не отправлялось.";
-  if (job?.photosCached)
-    return `${job.photosCached} фото уже были распознаны раньше — повторно в Groq не отправлялись.`;
+  const parts = [
+    job?.photosCached ? `${job.photosCached} фото` : null,
+    job?.documentsCached ? `${job.documentsCached} документ(а)` : null,
+  ].filter(Boolean);
+  if (parts.length)
+    return `${parts.join(" и ")} уже были разобраны раньше — повторно в Groq не отправлялись.`;
   return undefined;
 }
 
@@ -347,7 +448,13 @@ export function App() {
       );
       setPhase({
         kind: "review",
-        review: { payload: prepared, photos, selected },
+        review: {
+          payload: prepared,
+          photos,
+          selected,
+          docs: prepared.documentCandidates.map((candidate) => ({ candidate, state: "none" })),
+          unmatched: [],
+        },
       });
     } catch {
       setPhase({
@@ -368,12 +475,43 @@ export function App() {
     });
   }
 
+  /** Matches added files to the document cards by name, then reads them (in this page — nothing is uploaded yet). */
+  function onFiles(files: File[]) {
+    const updateSlot = (index: number, patch: Partial<DocSlot>) =>
+      setPhase((ph) => {
+        if (ph.kind !== "review") return ph;
+        const docs = ph.review.docs.map((d, i) => (i === index ? { ...d, ...patch } : d));
+        return { kind: "review", review: { ...ph.review, docs } };
+      });
+    if (phase.kind !== "review") return;
+    const slots = phase.review.docs;
+    const unmatched: string[] = [];
+    const taken = new Set<number>();
+    for (const file of files) {
+      const name = normalizeDocName(file.name);
+      let index = slots.findIndex((d, i) => !taken.has(i) && normalizeDocName(d.candidate.name) === name);
+      // A single document in the chat: accept the file even if the browser renamed it on download.
+      if (index === -1 && slots.length === 1 && !taken.has(0)) index = 0;
+      if (index === -1) {
+        unmatched.push(file.name);
+        continue;
+      }
+      taken.add(index);
+      updateSlot(index, { state: "reading", doc: undefined, error: undefined });
+      void parseDocument(file).then((r) =>
+        updateSlot(index, r.ok ? { state: "ok", doc: r.doc } : { state: "error", error: r.error }),
+      );
+    }
+    setPhase((ph) => (ph.kind === "review" ? { kind: "review", review: { ...ph.review, unmatched } } : ph));
+  }
+
   async function onSend(review: Review) {
     if (!settings) return;
     const { request } = attachImages(
       review.payload,
       review.photos,
       review.selected,
+      review.docs.flatMap((d) => (d.state === "ok" && d.doc ? [{ messageId: d.candidate.messageId, doc: d.doc }] : [])),
     );
     if (!request.messages.length) {
       return setPhase({
@@ -645,6 +783,7 @@ export function App() {
             </li>
           </ul>
           <PhotoPicker review={phase.review} onToggle={togglePhoto} />
+          <DocumentPicker review={phase.review} onFiles={onFiles} />
           <CoverageWarning coverage={phase.review.payload.coverage} />
           <div className="row">
             <button
@@ -655,6 +794,7 @@ export function App() {
             </button>
             <button
               className="primary"
+              disabled={phase.review.docs.some((d) => d.state === "reading")}
               onClick={() => void onSend(phase.review)}
             >
               Отправить в Groq
@@ -667,9 +807,14 @@ export function App() {
         <section className="card center">
           <span className="spinner big" />
           <p>
-            {phase.job.photos > 0
-              ? `Распознаю ${phase.job.photos} фото и анализирую`
-              : "Анализирую"}{" "}
+            {[
+              phase.job.photos > 0 ? `распознаю ${phase.job.photos} фото` : null,
+              phase.job.documents ? `разбираю ${phase.job.documents} документ(а)` : null,
+            ]
+              .filter(Boolean)
+              .join(", ")
+              .replace(/^./, (c) => c.toUpperCase()) || "Анализирую"}
+            {phase.job.photos > 0 || phase.job.documents ? " и анализирую" : ""}{" "}
             {phase.job.messages} сообщ. из «{phase.job.groupName}»…{" "}
             {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}
           </p>

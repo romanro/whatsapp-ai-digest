@@ -6,8 +6,13 @@ export const WHATSAPP_ORIGIN = "https://web.whatsapp.com";
 
 export async function getWhatsAppTab(): Promise<chrome.tabs.Tab | null> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id || !tab.url?.startsWith(`${WHATSAPP_ORIGIN}/`)) return null;
-  return tab;
+  if (tab?.id && tab.url?.startsWith(`${WHATSAPP_ORIGIN}/`)) return tab;
+  // Opened in a full tab (⤢): the active tab is this page, so use the most recently used WhatsApp tab.
+  if (new URLSearchParams(location.search).has("tab")) {
+    const tabs = await chrome.tabs.query({ url: `${WHATSAPP_ORIGIN}/*` });
+    return tabs.filter((t) => t.id).sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0))[0] ?? null;
+  }
+  return null;
 }
 
 /** Injects the read-only content script on demand (idempotent). */

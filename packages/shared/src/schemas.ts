@@ -42,6 +42,42 @@ export const InputImageSchema = z
     message: "An image needs exactly one of dataUrl or reading",
   });
 export type InputImage = z.infer<typeof InputImageSchema>;
+
+/** What the AI makes of one document (in Russian). */
+export const DocumentDigestSchema = z.object({
+  /** 2–5 sentences: what the document is and what matters in it. */
+  summary: z.string().max(3000),
+  /** Dates, amounts, things to do or bring, deadlines — one per line. */
+  keyPoints: z.array(z.string().max(500)).max(20),
+  /** Full translation for short documents, otherwise null. */
+  translation: z.string().max(30_000).nullable(),
+});
+export type DocumentDigest = z.infer<typeof DocumentDigestSchema>;
+
+const DataUrlImage = z
+  .string()
+  .max(LIMITS.maxImageDataUrlChars)
+  .regex(/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/);
+
+/**
+ * A document (PDF/DOCX) the user downloaded from WhatsApp and added in the popup, attached to its message.
+ * The extension extracts the text itself; a scanned PDF comes as page images instead. When the extension already has
+ * the digest from an earlier summary, it sends only that.
+ */
+export const InputDocumentSchema = z
+  .object({
+    messageId: z.string().min(1).max(64),
+    name: z.string().min(1).max(LIMITS.maxDocumentNameChars),
+    kind: z.enum(["pdf", "docx"]),
+    pages: z.number().int().min(1).max(10_000).nullable().default(null),
+    text: z.string().max(LIMITS.maxDocumentChars).optional(),
+    pageImages: z.array(DataUrlImage).min(1).max(LIMITS.maxDocumentPageImages).optional(),
+    digest: DocumentDigestSchema.optional(),
+  })
+  .refine((d) => [d.text, d.pageImages, d.digest].filter((x) => x !== undefined).length === 1, {
+    message: "A document needs exactly one of text, pageImages or digest",
+  });
+export type InputDocument = z.infer<typeof InputDocumentSchema>;
 export type InputMessage = z.infer<typeof InputMessageSchema>;
 
 export const CoverageSchema = z.object({
@@ -65,19 +101,21 @@ export const SummarizeRequestSchema = z
     messages: z.array(InputMessageSchema).min(1).max(LIMITS.maxMessages),
     /** Optional, opt-in photo analysis. */
     images: z.array(InputImageSchema).max(LIMITS.maxImages).default([]),
+    /** Documents the user added (downloaded from WhatsApp themselves). */
+    documents: z.array(InputDocumentSchema).max(LIMITS.maxDocuments).default([]),
   })
   .superRefine((req, ctx) => {
     const ids = new Set(req.messages.map((m) => m.id));
-    const withImage = new Set(req.images.map((i) => i.messageId));
-    for (const img of req.images) {
+    const withImage = new Set([...req.images, ...req.documents].map((i) => i.messageId));
+    for (const img of [...req.images, ...req.documents]) {
       if (!ids.has(img.messageId)) {
-        ctx.addIssue({ code: "custom", message: `Image references unknown message ${img.messageId}` });
+        ctx.addIssue({ code: "custom", message: `Attachment references unknown message ${img.messageId}` });
         return;
       }
     }
     for (const m of req.messages) {
       if (m.text.trim() === "" && !withImage.has(m.id)) {
-        ctx.addIssue({ code: "custom", message: `Message ${m.id} has neither text nor an image` });
+        ctx.addIssue({ code: "custom", message: `Message ${m.id} has neither text nor an attachment` });
         return;
       }
     }
@@ -211,6 +249,10 @@ export const SourceRefSchema = z.object({
   text: z.string().default(""),
   /** Full Russian translation, or null if the original is already Russian / not translated. */
   translation: z.string().nullable().default(null),
+  /** Documents attached to this message, with their digest (shown under the source). */
+  documents: z
+    .array(DocumentDigestSchema.extend({ name: z.string(), kind: z.enum(["pdf", "docx"]), pages: z.number().int().nullable() }))
+    .default([]),
 });
 export type SourceRef = z.infer<typeof SourceRefSchema>;
 
@@ -243,6 +285,11 @@ export const SummarizeResponseSchema = z.object({
     imagesCached: z.number().int().default(0),
     /** Fresh readings, by index in request.images — the extension caches them for later summaries. */
     imageReadings: z.array(ImageReadingSchema.extend({ index: z.number().int().min(0) })).default([]),
+    documentsAnalyzed: z.number().int().default(0),
+    documentsCached: z.number().int().default(0),
+    documentsFailed: z.number().int().default(0),
+    /** Fresh digests, by index in request.documents — cached by the extension like photo readings. */
+    documentDigests: z.array(DocumentDigestSchema.extend({ index: z.number().int().min(0) })).default([]),
     visionModel: z.string().nullable().default(null),
     generatedAt: z.string(),
   }),

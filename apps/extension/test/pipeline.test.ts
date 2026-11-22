@@ -23,6 +23,7 @@ const extraction = (messages: RawMessage[], stats: Partial<ExtractionResult["sta
     otherMedia: 0,
     imagesLoaded: 0,
     imagesNotLoaded: 0,
+    documents: 0,
     truncated: 0,
     photoDateUncertain: 0,
     duplicatesRemoved: 0,
@@ -108,5 +109,47 @@ describe("photos", () => {
     expect(request.images.map((i) => i.messageId)).toEqual(["p2", "p1"]);
     expect(request.messages.map((m) => m.id)).toEqual(["t1", "p1", "p2"]); // p3 deselected and captionless
     expect(SummarizeRequestSchema.safeParse(request).success).toBe(true);
+  });
+});
+
+describe("documents", () => {
+  const msgs: RawMessage[] = [
+    { key: "d1", sender: "Ganenet", timestamp: iso(20, 9), text: "", documents: ["שיעור בישול.pdf"] },
+    { key: "d2", sender: "Ganenet", timestamp: iso(20, 10), text: "Анкета", documents: ["Анкета.docx"] },
+    { key: "t1", sender: "Анна", timestamp: iso(20, 11), text: "Спасибо" },
+  ];
+  const doc = {
+    name: "שיעור בישול.pdf",
+    kind: "pdf" as const,
+    pages: 1,
+    hash: "h",
+    text: "מה עליי להביא? טלפון 052-6989474",
+    truncated: false,
+  };
+
+  it("lists document cards even in text-only mode, newest first", () => {
+    const r = preparePayload(extraction(msgs), "24h", NOW);
+    if ("empty" in r) throw new Error("unexpected empty");
+    expect(r.documentCandidates.map((c) => [c.messageId, c.name])).toEqual([
+      ["d2", "Анкета.docx"],
+      ["d1", "שיעור בישול.pdf"],
+    ]);
+  });
+
+  it("attaches added documents with redacted text and drops document messages without a file", () => {
+    const r = preparePayload(extraction(msgs), "24h", NOW);
+    if ("empty" in r) throw new Error("unexpected empty");
+    const { request, documentsSent, documentRedactions } = attachImages(r, [], new Set(), [{ messageId: "d1", doc }]);
+    expect(documentsSent).toBe(1);
+    expect(documentRedactions.phones).toBe(1);
+    expect(request.documents).toEqual([
+      { messageId: "d1", name: "שיעור בישול.pdf", kind: "pdf", pages: 1, text: expect.stringContaining("מה עליי להביא?") },
+    ]);
+    expect(JSON.stringify(request)).not.toContain("052-6989474");
+    expect(request.messages.map((m) => m.id)).toEqual(["d1", "d2", "t1"]);
+    expect(SummarizeRequestSchema.safeParse(request).success).toBe(true);
+
+    const none = attachImages(r, [], new Set(), []).request;
+    expect(none.messages.map((m) => m.id)).toEqual(["d2", "t1"]);
   });
 });

@@ -1,11 +1,12 @@
-import { LIMITS, type ImageReading, type SummarizeRequest, type SummarizeResponse } from "@wad/shared";
+import { LIMITS, type DocumentDigest, type ImageReading, type SummarizeRequest, type SummarizeResponse } from "@wad/shared";
 import type { SummaryPhotos } from "./jobs.ts";
 
 /**
  * What the extension remembers between runs (chrome.storage.local, i.e. on disk in the Chrome profile):
  * - per-group checkbox state (consents, photo analysis);
  * - the last summary of each group (with the photos it cites) and a fingerprint of what was sent for it;
- * - photo readings by photo hash, so a photo is sent to the AI only once.
+ * - photo readings by photo hash, so a photo is sent to the AI only once;
+ * - document digests by the hash of the document's text, so a document is digested only once.
  * "Удалить сохранённые данные" in the settings removes all of it.
  */
 export interface KV {
@@ -22,10 +23,12 @@ export const chromeLocal: KV = {
 
 const PREFS_KEY = "groupPrefs";
 const READINGS_KEY = "photoReadings";
+const DIGESTS_KEY = "documentDigests";
 const SUMMARY_INDEX_KEY = "summaryIndex";
 const summaryKey = (group: string) => `summary:${group}`;
 
 export const MAX_READINGS = 300;
+export const MAX_DIGESTS = 100;
 export const MAX_SAVED_SUMMARIES = 20;
 
 export async function sha256(text: string): Promise<string> {
@@ -94,6 +97,55 @@ export async function storeReadings(kv: KV, result: SummarizeResponse, hashes: (
   await kv.set({ [READINGS_KEY]: Object.fromEntries(kept) });
 }
 
+/* ---------------- document digests ---------------- */
+
+type StoredDigest = DocumentDigest & { at: number };
+
+/** Hash of each document's content (null for one that is already a digest). */
+export function documentHashes(request: SummarizeRequest): Promise<(string | null)[]> {
+  return Promise.all(
+    request.documents.map((d) =>
+      d.text !== undefined ? sha256(`text:${d.text}`) : d.pageImages ? sha256(`pages:${d.pageImages.join("|")}`) : null,
+    ),
+  );
+}
+
+/** Replaces documents digested before with their cached digest. */
+export async function withCachedDigests(
+  kv: KV,
+  request: SummarizeRequest,
+  hashes: (string | null)[],
+): Promise<{ request: SummarizeRequest; reused: number }> {
+  const cache = (await kv.get<Record<string, StoredDigest>>(DIGESTS_KEY)) ?? {};
+  let reused = 0;
+  const documents = request.documents.map((d, i) => {
+    const hit = hashes[i] ? cache[hashes[i] as string] : undefined;
+    if (!hit) return d;
+    reused++;
+    return {
+      messageId: d.messageId,
+      name: d.name,
+      kind: d.kind,
+      pages: d.pages,
+      digest: { summary: hit.summary, keyPoints: hit.keyPoints, translation: hit.translation },
+    };
+  });
+  return { request: { ...request, documents }, reused };
+}
+
+export async function storeDigests(kv: KV, result: SummarizeResponse, hashes: (string | null)[], now: number): Promise<void> {
+  if (!result.meta.documentDigests.length) return;
+  const cache = (await kv.get<Record<string, StoredDigest>>(DIGESTS_KEY)) ?? {};
+  for (const d of result.meta.documentDigests) {
+    const hash = hashes[d.index];
+    if (hash) cache[hash] = { summary: d.summary, keyPoints: d.keyPoints, translation: d.translation, at: now };
+  }
+  const kept = Object.entries(cache)
+    .sort(([, a], [, b]) => b.at - a.at)
+    .slice(0, MAX_DIGESTS);
+  await kv.set({ [DIGESTS_KEY]: Object.fromEntries(kept) });
+}
+
 /* ---------------- summaries ---------------- */
 
 export interface SavedSummary {
@@ -105,13 +157,14 @@ export interface SavedSummary {
 }
 
 /** Same messages, photos and period → same fingerprint ("now" and coverage wording don't matter). */
-export async function fingerprint(request: SummarizeRequest, hashes: (string | null)[]): Promise<string> {
+export async function fingerprint(request: SummarizeRequest, hashes: (string | null)[], docHashes: (string | null)[] = []): Promise<string> {
   return sha256(
     JSON.stringify({
       groupName: request.groupName,
       period: request.period,
       messages: request.messages.map((m) => [m.id, m.sender, m.timestamp, m.text]),
       images: request.images.map((img, i) => [img.messageId, hashes[i] ?? img.reading ?? null]),
+      documents: request.documents.map((d, i) => [d.messageId, d.name, docHashes[i] ?? d.digest ?? null]),
     }),
   );
 }
@@ -140,5 +193,5 @@ export async function deleteSavedSummary(kv: KV, groupName: string): Promise<voi
 /** Removes everything above (settings are kept). */
 export async function clearAllSaved(kv: KV): Promise<void> {
   const index = (await kv.get<Record<string, number>>(SUMMARY_INDEX_KEY)) ?? {};
-  await kv.remove([PREFS_KEY, READINGS_KEY, SUMMARY_INDEX_KEY, ...Object.keys(index).map(summaryKey)]);
+  await kv.remove([PREFS_KEY, READINGS_KEY, DIGESTS_KEY, SUMMARY_INDEX_KEY, ...Object.keys(index).map(summaryKey)]);
 }
