@@ -4,6 +4,15 @@ import {
   type SummarizeRequest,
   type SummarizeResponse,
 } from "@wad/shared";
+import {
+  fingerprint,
+  imageHashes,
+  loadSavedSummary,
+  saveSummary,
+  storeReadings,
+  withCachedReadings,
+  type KV,
+} from "./cache.ts";
 
 /**
  * A summary job runs in the extension's service worker so the popup can be closed while the server works
@@ -17,6 +26,10 @@ export interface Job {
   groupName: string;
   messages: number;
   photos: number;
+  /** Photos whose earlier reading was reused instead of sending them to the AI again. */
+  photosCached?: number;
+  /** Nothing changed since the saved summary of this group — it was shown without calling the AI. */
+  reused?: boolean;
   error?: string;
 }
 
@@ -35,6 +48,8 @@ export interface JobDeps {
   keepAlive(): () => void;
   now(): number;
   newId(): string;
+  /** Persistent store for saved summaries and photo readings (chrome.storage.local); omitted = no caching. */
+  cache?: KV;
 }
 
 export const JOB_KEY = "job";
@@ -72,7 +87,7 @@ export function citedPhotos(
   let used = 0;
   for (const id of cited) {
     for (const img of images.filter((i) => i.messageId === id)) {
-      if (used + img.dataUrl.length > budget) continue;
+      if (!img.dataUrl || used + img.dataUrl.length > budget) continue;
       used += img.dataUrl.length;
       (photos[id] ??= []).push(img.dataUrl);
     }
@@ -128,6 +143,24 @@ export class JobRunner {
     };
     const controller = new AbortController();
     this.controller = controller;
+    const { cache } = this.deps;
+    const hashes = await imageHashes(request);
+    const print = await fingerprint(request, hashes);
+
+    // Same messages and photos as the saved summary of this group → show it, nothing is sent.
+    const saved = cache ? await loadSavedSummary(cache, request.groupName).catch(() => null) : null;
+    if (saved?.fingerprint === print) {
+      const reusedJob: Job = { ...job, status: "done", reused: true, finishedAt: this.deps.now() };
+      await this.deps.set({ [RESULT_KEY]: saved.result, [PHOTOS_KEY]: saved.photos, [JOB_KEY]: reusedJob });
+      this.deps.badge("done");
+      this.controller = null;
+      return { ok: true, job: reusedJob, done: Promise.resolve() };
+    }
+
+    const { request: toSend, reused } = cache
+      ? await withCachedReadings(cache, request, hashes).catch(() => ({ request, reused: 0 }))
+      : { request, reused: 0 };
+    job.photosCached = reused;
     await this.deps.remove(PHOTOS_KEY);
     await this.deps.set({ [JOB_KEY]: job });
     this.deps.badge("running");
@@ -135,13 +168,19 @@ export class JobRunner {
 
     const done = (async () => {
       try {
-        const result = await this.deps.summarize(request, controller.signal);
+        const result = await this.deps.summarize(toSend, controller.signal);
+        const photos = citedPhotos(result, request.images);
         await this.deps.set({
           [RESULT_KEY]: result,
-          [PHOTOS_KEY]: citedPhotos(result, request.images),
+          [PHOTOS_KEY]: photos,
           [JOB_KEY]: { ...job, status: "done", finishedAt: this.deps.now() },
         });
         this.deps.badge("done");
+        if (cache) {
+          // Caching is best-effort: a full or failing store must not turn a finished summary into an error.
+          await storeReadings(cache, result, hashes, this.deps.now()).catch(() => undefined);
+          await saveSummary(cache, { result, photos, fingerprint: print, savedAt: this.deps.now() }).catch(() => undefined);
+        }
       } catch (err) {
         if (controller.signal.aborted) {
           await this.deps.remove(JOB_KEY);

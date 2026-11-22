@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { SummarizeRequestSchema } from "@wad/shared";
 import { AiError } from "../src/ai/provider.ts";
 import { VISION_SYSTEM, buildChunkPrompt } from "../src/ai/prompt.ts";
 import { retryAfterSeconds } from "../src/ai/openai-compatible.ts";
@@ -43,6 +44,36 @@ describe("photo analysis", () => {
     expect(res.meta).toMatchObject({ imagesAnalyzed: 2, imagesFailed: 0, visionModel: "fake-vision", messagesAnalyzed: 5 });
     expect(res.summary.tasks[0]?.sources[0]).toMatchObject({ id: "p1", timestamp: "2026-11-20T15:00:00+02:00" });
     expect(res.summary.tasks[0]?.details).toBe("Стр. 45, упр. 3.");
+  });
+
+  it("reuses cached readings without calling the vision model, and returns fresh readings by image index", async () => {
+    const provider = new FakeProvider(
+      [
+        (req) => {
+          expect(req.user).toContain("Математика: стр. 45");
+          return emptySummary();
+        },
+      ],
+      true,
+      [reading("", "Скриншот перевода в Bit.")],
+    );
+    const request = {
+      ...photoRequest(),
+      images: [
+        { messageId: "p1", reading: { text: "Математика: стр. 45", description: "Доска" } },
+        { messageId: "a2", dataUrl: JPEG },
+      ],
+    };
+    const res = await summarize(request, provider, { batchMaxChars: 100_000 });
+    expect(provider.visionCalls).toHaveLength(1);
+    expect(res.meta).toMatchObject({ imagesAnalyzed: 1, imagesCached: 1, imagesFailed: 0 });
+    expect(res.meta.imageReadings).toEqual([{ index: 1, text: "", description: "Скриншот перевода в Bit." }]);
+  });
+
+  it("rejects an image with both or neither of dataUrl and reading", () => {
+    const base = photoRequest();
+    const bad = [{ messageId: "p1" }, { messageId: "p1", dataUrl: JPEG, reading: { text: "", description: "x" } }];
+    for (const img of bad) expect(SummarizeRequestSchema.safeParse({ ...base, images: [img] }).success).toBe(false);
   });
 
   it("drops a captionless photo that couldn't be read and reports it", async () => {

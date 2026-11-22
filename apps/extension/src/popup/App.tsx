@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  LIMITS,
   PERIODS,
   PERIOD_LABELS_RU,
   formatWallTime,
@@ -21,6 +22,13 @@ import {
   startBackgroundJob,
 } from "../lib/chrome.ts";
 import { JOB_KEY, type Job, type SummaryPhotos } from "../lib/jobs.ts";
+import {
+  chromeLocal,
+  deleteSavedSummary,
+  loadGroupPrefs,
+  loadSavedSummary,
+  saveGroupPrefs,
+} from "../lib/cache.ts";
 import {
   attachImages,
   preparePayload,
@@ -48,7 +56,13 @@ type Phase =
   | { kind: "review"; review: Review }
   | { kind: "empty"; coverage: Coverage }
   | { kind: "sending"; job: Job }
-  | { kind: "done"; result: SummarizeResponse; photos: SummaryPhotos }
+  | {
+      kind: "done";
+      result: SummarizeResponse;
+      photos: SummaryPhotos;
+      /** Shown above the summary, e.g. "nothing new since the saved summary". */
+      note?: string;
+    }
   | { kind: "error"; message: string };
 
 const PERIOD_SHORT: Record<Period, string> = {
@@ -58,6 +72,22 @@ const PERIOD_SHORT: Record<Period, string> = {
 };
 
 type SimpleCheck = { state: "ok" | "fail" | "checking"; message?: string };
+
+const savedAt = (iso: string) =>
+  new Date(iso).toLocaleString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+function jobNote(job: Job | null): string | undefined {
+  if (job?.reused)
+    return "Новых сообщений и фото с прошлой сводки нет — показана сохранённая, в Groq ничего не отправлялось.";
+  if (job?.photosCached)
+    return `${job.photosCached} фото уже были распознаны раньше — повторно в Groq не отправлялись.`;
+  return undefined;
+}
 
 function StatusRow({
   label,
@@ -183,7 +213,12 @@ export function App() {
       return setPhase({ kind: "error", message: job.error ?? "Ошибка." });
     const result = await loadLastResult<SummarizeResponse>();
     if (result) {
-      setPhase({ kind: "done", result, photos: await loadLastPhotos() });
+      setPhase({
+        kind: "done",
+        result,
+        photos: await loadLastPhotos(),
+        note: job?.status === "done" ? jobNote(job) : undefined,
+      });
       if (job?.status === "done") void dismissJob(); // seen → clear the ✓ badge
     } else {
       setPhase((ph) => (ph.kind === "sending" ? { kind: "idle" } : ph));
@@ -224,6 +259,43 @@ export function App() {
   }, [sending]);
 
   const probe = status.whatsapp.state === "ok" ? status.whatsapp.data : null;
+  const groupName = probe?.chatOpen && probe.isGroup ? probe.groupName : null;
+
+  // Checkboxes are remembered per group; the group's saved summary is shown when nothing else is.
+  useEffect(() => {
+    if (!groupName) return;
+    let cancelled = false;
+    void (async () => {
+      const prefs = await loadGroupPrefs(chromeLocal, groupName).catch(() => null);
+      if (cancelled) return;
+      setConsentPermission(prefs?.permission ?? false);
+      setConsentUpload(prefs?.upload ?? false);
+      if (prefs) setIncludeImages(prefs.images);
+      const saved = await loadSavedSummary(chromeLocal, groupName).catch(() => null);
+      if (cancelled) return;
+      setPhase((ph) => {
+        const showsOtherGroup =
+          ph.kind === "done" && ph.result.groupName !== groupName.slice(0, LIMITS.maxGroupNameChars);
+        if (ph.kind !== "idle" && !showsOtherGroup) return ph;
+        return saved ? { kind: "done", result: saved.result, photos: saved.photos } : { kind: "idle" };
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [groupName]);
+
+  function updatePrefs(change: Partial<{ permission: boolean; upload: boolean; images: boolean }>) {
+    const next = {
+      permission: change.permission ?? consentPermission,
+      upload: change.upload ?? consentUpload,
+      images: change.images ?? includeImages,
+    };
+    setConsentPermission(next.permission);
+    setConsentUpload(next.upload);
+    setIncludeImages(next.images);
+    if (groupName) void saveGroupPrefs(chromeLocal, groupName, next).catch(() => undefined);
+  }
   const health = status.backend.state === "ok" ? status.backend.data : null;
   const aiReady = !!health?.ai.configured && health.ai.modelAvailable !== false;
   const visionModel = health?.ai.vision.model ?? null;
@@ -313,9 +385,8 @@ export function App() {
     try {
       const res = await startBackgroundJob(request);
       if (!res.ok) return setPhase({ kind: "error", message: res.error });
-      if (res.job) setPhase({ kind: "sending", job: res.job });
-      // Consent is per-run: reset after each upload.
-      setConsentUpload(false);
+      if (res.job?.status === "done") await applyJob(res.job);
+      else if (res.job) setPhase({ kind: "sending", job: res.job });
     } catch {
       setPhase({
         kind: "error",
@@ -338,8 +409,9 @@ export function App() {
     setTimeout(() => setCopied(false), 1500);
   }
 
-  async function onClear() {
+  async function onClear(result: SummarizeResponse) {
     await clearLastResult();
+    await deleteSavedSummary(chromeLocal, result.groupName).catch(() => undefined);
     setPhase({ kind: "idle" });
   }
 
@@ -472,7 +544,7 @@ export function App() {
               type="checkbox"
               checked={photosOn}
               disabled={busy || !visionReady}
-              onChange={(e) => setIncludeImages(e.target.checked)}
+              onChange={(e) => updatePrefs({ images: e.target.checked })}
             />
             <span>
               Анализировать фото <span className="beta">бета</span>
@@ -490,7 +562,7 @@ export function App() {
             <input
               type="checkbox"
               checked={consentPermission}
-              onChange={(e) => setConsentPermission(e.target.checked)}
+              onChange={(e) => updatePrefs({ permission: e.target.checked })}
               disabled={busy}
             />
             <span>
@@ -501,7 +573,7 @@ export function App() {
             <input
               type="checkbox"
               checked={consentUpload}
-              onChange={(e) => setConsentUpload(e.target.checked)}
+              onChange={(e) => updatePrefs({ upload: e.target.checked })}
               disabled={busy}
             />
             <span>
@@ -523,7 +595,10 @@ export function App() {
               сервер.
               {photosOn &&
                 " Фото отправляются как есть (без размытия лиц и скрытия данных) — отправляйте только те, что не содержат лишнего."}{" "}
-              Сообщения не сохраняются на диск и не попадают в журналы.
+              Сервер ничего не сохраняет и не пишет сообщения в журналы.
+              Расширение хранит в Chrome последнюю сводку каждой группы и
+              распознанный текст фото, чтобы не отправлять их повторно —
+              удалить: ⚙ → «Удалить сохранённые данные».
             </p>
           </details>
         </div>
@@ -648,9 +723,10 @@ export function App() {
               <div className="sub">
                 {PERIOD_LABELS_RU[phase.result.period]} ·{" "}
                 {phase.result.meta.messagesAnalyzed} сообщ.
-                {phase.result.meta.imagesAnalyzed > 0
-                  ? ` · ${phase.result.meta.imagesAnalyzed} фото`
+                {phase.result.meta.imagesAnalyzed + phase.result.meta.imagesCached > 0
+                  ? ` · ${phase.result.meta.imagesAnalyzed + phase.result.meta.imagesCached} фото`
                   : ""}
+                {` · ${savedAt(phase.result.meta.generatedAt)}`}
               </div>
             </div>
             <div className="row tight">
@@ -660,11 +736,12 @@ export function App() {
               >
                 {copied ? "Скопировано ✓" : "Копировать"}
               </button>
-              <button className="ghost" onClick={() => void onClear()}>
+              <button className="ghost" onClick={() => void onClear(phase.result)}>
                 Очистить
               </button>
             </div>
           </div>
+          {phase.note && <p className="sub">{phase.note}</p>}
           <CoverageWarning coverage={phase.result.coverage} />
           <SummaryView summary={phase.result.summary} photos={phase.photos} />
           <div className="footnote">

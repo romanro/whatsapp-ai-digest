@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { DEFAULT_BACKEND_URL, LIMITS, PERIODS, PERIOD_LABELS_RU, type DateOrder, type Period } from "@wad/shared";
 import { DEFAULT_SETTINGS, isLocalBackendUrl, loadSettings, saveSettings, type Settings } from "../lib/settings.ts";
 import { clearLastResult } from "../lib/chrome.ts";
+import { chromeLocal, clearAllSaved } from "../lib/cache.ts";
 
 export function Options() {
   const [s, setS] = useState<Settings>(DEFAULT_SETTINGS);
@@ -81,8 +82,13 @@ export function Options() {
           <button className="primary" onClick={() => void onSave()}>
             Сохранить
           </button>
-          <button className="secondary" onClick={() => void clearLastResult().then(() => setSaved("Последняя сводка удалена"))}>
-            Удалить сохранённую сводку
+          <button
+            className="secondary"
+            onClick={() =>
+              void Promise.all([clearLastResult(), clearAllSaved(chromeLocal)]).then(() => setSaved("Сохранённые данные удалены"))
+            }
+          >
+            Удалить сохранённые данные
           </button>
           {saved && <span className="saved">{saved}</span>}
         </div>
@@ -95,7 +101,10 @@ export function Options() {
             Текст выбранных сообщений <b>покидает ваш компьютер</b>: он передаётся через локальный сервер в Groq (облачный
             AI-сервис) для анализа. Ознакомьтесь с политикой Groq: groq.com/privacy-policy.
           </li>
-          <li>Ничего не отправляется без вашего подтверждения — для каждой сводки нужно отметить согласие и нажать «Отправить».</li>
+          <li>
+            Ничего не отправляется без вашего подтверждения: перед каждой отправкой показывается, что именно уйдёт, и нужно нажать
+            «Отправить в Groq». Отмеченные согласия запоминаются для каждой группы.
+          </li>
           <li>
             Перед отправкой автоматически скрываются номера телефонов, email, номера банковских карт и IBAN, а участники без
             имени (номер телефона) заменяются на «Участник N». Это базовая защита: имена, адреса, сведения о детях и другие
@@ -107,7 +116,11 @@ export function Options() {
             вы видите все фото и можете снять отметку с любого. Видео, голосовые и файлы не обрабатываются; расширение ничего не
             скачивает само.
           </li>
-          <li>Сообщения не сохраняются на диск и не пишутся в журналы. Последняя сводка хранится только в памяти браузера до его закрытия.</li>
+          <li>
+            Сервер ничего не сохраняет и не пишет сообщения в журналы. Расширение хранит в профиле Chrome последнюю сводку каждой
+            группы (с цитируемыми сообщениями и фото) и распознанный текст фото — чтобы показать сводку сразу и не отправлять
+            одно и то же повторно. Кнопка «Удалить сохранённые данные» выше стирает всё это.
+          </li>
           <li>Нет аналитики, телеметрии и сторонних трекеров. API-ключ Groq хранится только на локальном сервере (файл .env).</li>
         </ul>
         <h2>Ограничения WhatsApp</h2>
